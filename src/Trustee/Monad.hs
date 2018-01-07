@@ -32,6 +32,7 @@ newtype M a = M { unM :: ReaderT Env IO a }
 
 data Env = Env
     { envThreads   :: TVar Int
+    , envInQueue   :: TVar Int
     , envGhcLocks  :: PerGHC (TVar Bool)
     , envPrintLock :: TVar Bool
     , envGhcJobs   :: Int
@@ -41,6 +42,7 @@ data Env = Env
 newEnv :: Config -> IO Env
 newEnv cfg = atomically $ Env
     <$> newTVar (cfgThreads cfg)
+    <*> newTVar 0
     <*> sequence (pure (newTVar True))
     <*> newTVar True
     <*> pure (cfgGhcJobs cfg)
@@ -81,8 +83,8 @@ runWithGHC dry dir ghcVersion cmd args = mkM action
     color ExitSuccess     = Green
     color (ExitFailure _) = if dry then Magenta else Red
 
-    action env = bracket acquire release $ \n -> do
-        runM' env $ putStrs [ dir' ++ " " ++ colored Blue formatted ++ " threads left " ++  show n]
+    action env = bracket acquire release $ \(m, n) -> do
+        runM' env $ putStrs [ dir' ++ " " ++ colored Blue formatted ++ " " ++ show n ++ "/" ++ show m]
         let process = (Process.proc cmd args) { Process.cwd = Just $ Path.toFilePath dir }
         (ec, o', e') <- Process.readCreateProcessWithExitCode process ""
         runM' env $ putStrs [ dir' ++ " " ++ colored (color ec) formatted  ]
@@ -96,23 +98,35 @@ runWithGHC dry dir ghcVersion cmd args = mkM action
 
         ghcLock = index (envGhcLocks env) ghcVersion
         threadLock = envThreads env
+        inQueueTVar = envInQueue env
 
-        acquire = atomically $ do
-            b <- readTVar ghcLock
-            unless b retry
+        acquire = do
+            atomically $ do
+                m <- readTVar inQueueTVar
+                let m' = m + 1
+                writeTVar inQueueTVar $! m'
 
-            n <- readTVar threadLock
-            unless (n >= threads) retry
+            atomically $ do
+                b <- readTVar ghcLock
+                unless b retry
 
-            writeTVar ghcLock False
-            writeTVar threadLock $! n - threads
+                n <- readTVar threadLock
+                unless (n >= threads) retry
 
-            return (n - threads)
+                writeTVar ghcLock False
+                let n' = n - threads
+                writeTVar threadLock $! n'
+
+                m <- readTVar inQueueTVar
+
+                return (m, n')
 
         release _ = atomically $ do
             writeTVar ghcLock True
             n <- readTVar threadLock
             writeTVar threadLock $! n + threads
+            m <- readTVar inQueueTVar
+            writeTVar inQueueTVar $! m - 1
 
 jobs :: M (Int, Int)
 jobs = mkM $ \env -> pure (envGhcJobs env, envCabalJobs env)

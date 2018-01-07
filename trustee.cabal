@@ -21,8 +21,10 @@ library
     Trustee
     Trustee.Config
     Trustee.Index
+    Trustee.Get
     Trustee.GHC
     Trustee.LowerBounds
+    Trustee.Matrix
     Trustee.Monad
     Trustee.NewBuild
     Trustee.Options

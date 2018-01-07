@@ -6,6 +6,7 @@ module Trustee.Options (
 
 import Control.Applicative  ((<**>), (<|>), many)
 import Distribution.Text    (simpleParse)
+import Distribution.Package (PackageName)
 import Distribution.Version (VersionRange, anyVersion)
 
 import qualified Options.Applicative as O
@@ -18,6 +19,7 @@ newtype GlobalOpts = GlobalOpts
 data Cmd
     = CmdNewBuild [String]
     | CmdMatrix [FilePath]
+    | CmdGet PackageName VersionRange
     | CmdLowerBounds
   deriving Show
 
@@ -48,6 +50,7 @@ cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
     [ O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
     , O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
+    , O.command "get" $ O.info cmdGet $ O.progDesc "Fetch package sources"
     ]
 
 cmdNewBuild :: O.Parser Cmd
@@ -61,3 +64,15 @@ cmdMatrix = CmdMatrix <$> many (O.strArgument $ mconcat
     [ O.metavar "pkg-dir"
     , O.help "package directories to include in matrix"
     ])
+
+cmdGet :: O.Parser Cmd
+cmdGet = CmdGet <$> name <*> (version <|> pure anyVersion) where
+    name = O.argument (O.maybeReader simpleParse) $ mconcat
+        [ O.metavar ":pkgname"
+        , O.help "Package name"
+        ]
+
+    version = O.argument (O.maybeReader simpleParse) $ mconcat
+        [ O.metavar ":versions"
+        , O.help "Version range"
+        ]
