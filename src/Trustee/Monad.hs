@@ -16,10 +16,12 @@ import Control.Exception          (bracket, evaluate)
 import Control.Monad              (unless)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import Data.Foldable              (traverse_)
+import Path                       (Abs, Dir, Path)
 import System.Exit                (ExitCode (..))
-import System.Process             (readProcessWithExitCode)
 
 import qualified Control.Concurrent.Async as Async
+import qualified Path
+import qualified System.Process           as Process
 
 import Trustee.Config
 import Trustee.GHC
@@ -71,17 +73,19 @@ forConcurrently :: Traversable t => t a -> (a -> M b) -> M (t b)
 forConcurrently xs f = mkM $ \env ->
     Async.forConcurrently xs (runM' env . f)
 
-runWithGHC :: Bool -> GHCVer -> FilePath -> [String] -> M (ExitCode, String, String)
-runWithGHC dry ghcVersion cmd args = mkM action
+runWithGHC :: Bool -> Path Abs Dir -> GHCVer -> FilePath -> [String] -> M (ExitCode, String, String)
+runWithGHC dry dir ghcVersion cmd args = mkM action
   where
+    dir' = Path.toFilePath $ Path.dirname dir
     formatted = cmd ++ " " ++ unwords args
     color ExitSuccess     = Green
     color (ExitFailure _) = if dry then Magenta else Red
 
     action env = bracket acquire release $ \n -> do
-        runM' env $ putStrs [ colored Blue formatted ++ " threads left " ++  show n]
-        (ec, o', e') <- readProcessWithExitCode cmd args ""
-        runM' env $ putStrs [ colored (color ec) formatted  ]
+        runM' env $ putStrs [ dir' ++ " " ++ colored Blue formatted ++ " threads left " ++  show n]
+        let process = (Process.proc cmd args) { Process.cwd = Just $ Path.toFilePath dir }
+        (ec, o', e') <- Process.readCreateProcessWithExitCode process ""
+        runM' env $ putStrs [ dir' ++ " " ++ colored (color ec) formatted  ]
         o <- evaluate (force o')
         e <- evaluate (force e')
         return (ec, o, e)
