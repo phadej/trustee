@@ -14,6 +14,7 @@ import Control.Concurrent.STM
 import Control.DeepSeq            (force)
 import Control.Exception          (bracket, evaluate)
 import Control.Monad              (unless)
+import Control.Monad.IO.Class     (MonadIO)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import Data.Foldable              (traverse_)
 import Path                       (Abs, Dir, Path)
@@ -28,7 +29,7 @@ import Trustee.GHC
 import Trustee.Txt
 
 newtype M a = M { unM :: ReaderT Env IO a }
-  deriving newtype (Functor, Applicative, Monad)
+  deriving newtype (Functor, Applicative, Monad, MonadIO)
 
 data Env = Env
     { envThreads   :: TVar Int
@@ -107,13 +108,14 @@ runWithGHC dry dir ghcVersion cmd args = mkM action
                 writeTVar inQueueTVar $! m'
 
             atomically $ do
-                b <- readTVar ghcLock
-                unless b retry
+                unless dry $ do
+                    b <- readTVar ghcLock
+                    unless b retry
+                    writeTVar ghcLock False
 
                 n <- readTVar threadLock
                 unless (n >= threads) retry
 
-                writeTVar ghcLock False
                 let n' = n - threads
                 writeTVar threadLock $! n'
 
@@ -122,7 +124,7 @@ runWithGHC dry dir ghcVersion cmd args = mkM action
                 return (m, n')
 
         release _ = atomically $ do
-            writeTVar ghcLock True
+            unless dry $ writeTVar ghcLock True
             n <- readTVar threadLock
             writeTVar threadLock $! n + threads
             m <- readTVar inQueueTVar

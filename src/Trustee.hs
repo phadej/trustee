@@ -18,9 +18,9 @@ main = do
     (opts, cmd) <- parseOpts
     let cfg = defaultConfig
     case cmd of
-        CmdLowerBounds    -> runM cfg $ cmdLowerBounds opts cwd
+        CmdLowerBounds verify -> runM cfg $ cmdLowerBounds opts cwd verify
         CmdNewBuild args  -> runM cfg $ cmdNewBuild opts cwd args
         CmdGet pkgname vr -> cmdGet pkgname vr
-        CmdMatrix dirs    -> do
+        CmdMatrix dirs cs -> do
             dirs' <- traverse (Path.resolveDir cwd) dirs
-            runM cfg $ cmdMatrix opts dirs'
+            runM cfg $ cmdMatrix opts dirs' cs

@@ -16,11 +16,12 @@ import Trustee.Table
 import Trustee.Txt
 import Trustee.Util
 
-cmdMatrix :: GlobalOpts -> [Path Abs Dir] -> M ()
-cmdMatrix opts dirs' = do
+cmdMatrix :: GlobalOpts -> [Path Abs Dir] -> [String] -> M ()
+cmdMatrix opts dirs' cons = do
     let ghcs = reverse $ ghcsInRange (goGhcVersions opts)
+    let consOpts = map ("--constraint=" ++) cons
     xss <- forConcurrently dirs $
-        matrixRow ghcs ["--disable-tests", "--disable-benchmarks", "all" ]
+        matrixRow ghcs $ ["--disable-tests", "--disable-benchmarks", "all" ] ++ consOpts
 
     putStrs [ renderTable $ makeTable ghcs xss ]
   where

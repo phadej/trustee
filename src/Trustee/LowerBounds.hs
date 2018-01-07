@@ -1,229 +1,162 @@
 module Trustee.LowerBounds where
 
-import Path (Path, Abs, Dir)
+import Control.Monad                         (when)
+import Control.Monad.IO.Class                (liftIO)
+import Data.Maybe                            (mapMaybe)
+import Distribution.Compiler                 (CompilerFlavor (..))
+import Distribution.Package                  (PackageName)
+import Distribution.PackageDescription       (GenericPackageDescription (..))
+import Distribution.PackageDescription.Parse (readGenericPackageDescription)
+import Distribution.System                   (OS (..))
+import Distribution.Text                     (display)
+import Distribution.Types.CondTree           (simplifyCondTree)
+import Distribution.Types.Dependency         (Dependency (..))
+import Distribution.Version
+       (Version, VersionRange, intersectVersionRanges, simplifyVersionRange,
+       withinRange)
+import Path                                  (Abs, Dir, Path)
+import System.Exit                           (ExitCode (..))
+import System.FilePath.Glob                  (compile, globDir1)
 
+import qualified Data.Map.Strict                 as Map
+import qualified Data.Set                        as Set
+import qualified Distribution.PackageDescription as PD
+import qualified Path
+
+import Trustee.GHC      hiding (index)
+import Trustee.Index
 import Trustee.Monad
+import Trustee.NewBuild (Result (..))
 import Trustee.Options
+import Trustee.Table
+import Trustee.Txt
+import Trustee.Util
 
-cmdLowerBounds :: GlobalOpts -> Path Abs Dir -> M ()
-cmdLowerBounds _ _ = pure ()
+cmdLowerBounds :: GlobalOpts -> Path Abs Dir -> Bool -> M ()
+cmdLowerBounds opts dir verify = do
+    let ghcs = ghcsInRange (goGhcVersions opts)
+    (jGHC, jCabal) <- jobs
+    xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
 
+    case xs of
+        [cabalFile] -> do
+            index <- liftIO readIndex
+            gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
+            cols <- fmap Map.unions $ forConcurrently ghcs $ \ghcVersion -> do
+                cells <- lowerBoundsForGhc verify jGHC jCabal dir index gpd ghcVersion
+                return $ Map.mapKeysMonotonic ((,) ghcVersion) cells
 
-{-
+            putStrs [ renderTable $ makeTable ghcs cols ]
 
+        _ -> fail "no .cabal file found"
 
-lowerboundsCmd  :: [String] -> IO a
-#ifndef LOWERBOUNDS_ENABLED
-lowerboundsCmd _ = dieCli [Error "Compiled without +lowerbounds"]
-#else
-lowerboundsCmd argv = do
-    let path = "cabal.project"
-    Just proj <- runYamlWriter Nothing $ readProject path
-    index <- loadIndex
-
-    cols <- fmap M.unions $ forConcurrently ghcVersions $ \ghcVersion -> do
-        cells <- lowerBoundsForGhc (null argv) index proj ghcVersion
-        return $ M.mapKeysMonotonic ((,) ghcVersion) cells
-
-    printTable cols
-
-    -- TODO: exit code based on table result!
-    exitSuccess
+makeTable :: [GHCVer] -> Map.Map (GHCVer, PackageName) (Version, Result) -> [[Txt]]
+makeTable ghcs m
+    = (emptyTxt : map (mkTxt Black . display. toVersion) ghcs)
+    : map mkRow pkgNames
   where
-    ghcVersions =
-        -- [ mkVersion [7,0,4]
-        -- , mkVersion [7,2,2]
-        -- , mkVersion [7,4,2]
-        -- , mkVersion [7,6,3]
-        [ mkVersion [7,8,4]
-        , mkVersion [7,10,3]
-        , mkVersion [8,0,2]
-        , mkVersion [8,2,2]
-        ]
+    pkgNames = Set.toList $ Set.map snd $ Map.keysSet m
 
-data Cell
-    = CellOk Version
-    | CellHigh Version Version
-    | CellNoVersion
-    | CellBuildError Version String String
-  deriving (Eq, Ord, Show)
+    mkRow :: PackageName -> [Txt]
+    mkRow pkgName
+        = mkTxt Black (display pkgName)
+        : map (\g -> maybe emptyTxt (uncurry mkCell) $ Map.lookup (g, pkgName) m) ghcs
 
-cellText :: Cell -> Txt
-cellText (CellOk v)             = Txt ColorGreen   (length s) s where s = display v
-cellText CellNoVersion          = Txt ColorBlue    (length s) s where s = "no-ver"
-cellText (CellHigh v _)         = Txt ColorCyan    (length s) s where s = display v
-cellText (CellBuildError v _ _) = Txt ColorRed     (length s) s where s = display v
-
-thrPutStrLnQSem :: QSem
-thrPutStrLnQSem = unsafePerformIO (newQSem 1)
-{-# NOINLINE thrPutStrLnQSem #-}
-
-thrPutStrLn :: String -> IO ()
-thrPutStrLn s = bracket (waitQSem thrPutStrLnQSem) (\_ -> signalQSem thrPutStrLnQSem) $ \() -> do
-    putStrLn s
-    hFlush stdout
-
-emptyTxt :: Txt
-emptyTxt = Txt ColorNormal 0 ""
-
-textLength :: Txt -> Int
-textLength (Txt _ n _) = n
-
-printTable :: M.Map (Version, PackageName) Cell -> IO ()
-printTable m = do
-    putStrLn header
-    forM_ packageNames $ \pn -> do
-        putStrLn $ packageRow pn
-  where
-    m' = fmap cellText m
-
-    ghcVersions  = sortNub $ [ v | (v, _) <- M.keys m ]
-    packageNames = sortNub $ [ n | (_, n) <- M.keys m ]
-
-    packageNamesW = maximum (0 : map (length . display) packageNames) + 2
-    ghcVersionsW =
-        [ maximum (6 : [ textLength rc | ((v', _), rc) <- M.toList m', v == v' ]) + 2
-        | v <- ghcVersions
-        ]
-
-    header :: String
-    header = leftPad "" packageNamesW ++
-        concat [ leftPad (display v) w | (v, w) <- zip ghcVersions ghcVersionsW ]
-
-    packageRow :: PackageName -> String
-    packageRow pn = leftPad (display pn) packageNamesW ++ concat
-        [ leftPadTxt (fromMaybe emptyTxt $ M.lookup (v, pn) m') w
-        | (v, w) <- zip ghcVersions ghcVersionsW
-        ]
-
-
-    leftPadTxt :: Txt -> Int -> String
-    leftPadTxt (Txt ColorNormal n' str) n = str ++ replicate (n - n') ' '
-    leftPadTxt (Txt c           n' str) n = colorCode c ++ str ++ colorReset ++ replicate (n - n') ' '
-
-leftPad :: String -> Int -> String
-leftPad str n = str ++ replicate (n - length str) ' '
-
-sortNub :: Ord a => [a] -> [a]
-sortNub = S.toList . S.fromList
-
-cabalQSem :: QSem
-cabalQSem = unsafePerformIO $ do
-    n <- getNumCapabilities
-    newQSem n
-{-# NOINLINE cabalQSem #-}
+mkCell :: Version -> Result -> Txt
+mkCell v ResultOk         = mkTxt Green   $ display v
+mkCell v ResultDryFail {} = mkTxt Blue    $ display v
+mkCell v ResultDepFail {} = mkTxt Magenta $ display v
+mkCell v ResultFail {}    = mkTxt Red     $ display v
 
 lowerBoundsForGhc
-    :: Bool             -- build
-    -> Index            -- Index
-    -> Project Package  -- packages
-    -> Version          -- GHC version
-    -> IO (M.Map PackageName Cell)
-lowerBoundsForGhc build index proj ghcVersion = do
-    let deps  = allBuildDepends ghcVersion proj
-    let deps' = M.intersectionWith withinRange' index deps
+    :: Bool
+    -> Int -> Int
+    -> Path Abs Dir
+    -> Index
+    -> GenericPackageDescription
+    -> GHCVer
+    -> M (Map.Map PackageName (Version, Result))
+lowerBoundsForGhc verify _jGHC jCabal dir index gpd ghcVersion = do
+    let deps = allBuildDepends (toVersion ghcVersion) gpd
+    let deps' = Map.intersectionWith withinRange' index deps
 
-    -- non-dry sem
-    qsem <- newQSem 1
-
-    fmap M.fromList $ forConcurrently (M.toList deps') $ \(pkgName, vs) -> do
-        x <- findLowest qsem pkgName Nothing vs
-        return (pkgName, x)
+    fmap mkMap $ forConcurrently (Map.toList deps') $ \(pkgName, vs) ->
+        (,) pkgName <$> findLowest pkgName Nothing vs
   where
-    withinRange' vs vr = filter (`withinRange` vr) $ S.toList vs
+    withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
 
-    pfx pkgName v = "GHC " ++ leftPad (display ghcVersion) 6  ++ " " ++ leftPad pkgName 20 ++ " " ++ leftPad v' 10 ++ " "
-      where
-        v' | v == version0 = ""
-           | otherwise = display v
+    mkMap :: [(PackageName, Maybe (Version, Result))] -> Map.Map PackageName (Version, Result)
+    mkMap = Map.fromList . mapMaybe sequence
 
-    version0 = mkVersion []
-
-    findLowest :: QSem -> PackageName -> Maybe Version -> [Version] -> IO Cell
-    findLowest _ (display -> pkgName) _ [] = do
-        thrPutStrLn $ colorCode ColorBlue ++ pfx pkgName version0 ++ "No version found" ++ colorReset
-        return CellNoVersion
-    findLowest qsem pn@(display -> pkgName) u (v : vs) = do
-        (ec, o, e) <- bracket (waitQSem cabalQSem) (\_ -> signalQSem cabalQSem) $ \() -> readProcessWithExitCode
-            "cabal"
+    findLowest :: PackageName -> Maybe Version -> [Version] -> M (Maybe (Version, Result))
+    findLowest _       _ []       = return Nothing
+    findLowest pkgName _ (v : vs) = do
+        (ec, _, _) <- runWithGHC True dir ghcVersion "cabal"
             [ "new-build"
-            , "--builddir=.dist-newstyle-" ++ display ghcVersion ++ "-" ++ pkgName ++ "-" ++ display v
-            , "-w", "ghc-" ++ display ghcVersion
+            , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion) ++ "-" ++ display pkgName ++ "-" ++ display v
+            , "-w", "ghc-" ++ display (toVersion ghcVersion)
             , "--disable-tests", "--disable-benchmarks"
-            , "--constraint=" ++ pkgName ++ " ==" ++ display v
-            , "--ghc-options=" ++ ghcOptions
+            , "-j" ++ show jCabal
+            , "--constraint=" ++ display pkgName ++ "==" ++ display v
+            -- , "--ghc-options=" ++ ghcOptions
             , "--dry-run"
             , "all"
             ]
-            ""
-        _ <- evaluate (force o)
-        _ <- evaluate (force e)
 
         case ec of
-            ExitSuccess -> do
-                thrPutStrLn $ colorCode ColorMagenta ++ pfx pkgName v ++ "Install plan found" ++ colorReset
-                hFlush stdout
+            ExitSuccess   ->   do
+                r <- doVerify pkgName v
+                return $ Just (v, r)
+            ExitFailure _ -> findLowest pkgName (Just v) vs
 
-                verify qsem pn u v
+    isFailure (ExitFailure _) = True
+    isFailure ExitSuccess     = False
 
-            ExitFailure _ -> do
-                thrPutStrLn $ pfx pkgName v ++ "Install-plan not found, trying next version..."
-                hFlush stdout
-                findLowest qsem pn (u <|> Just v) vs
-
-    cellDone Nothing v  = CellOk v
-    cellDone (Just u) v
-        | take 2 (versionNumbers u) == take 2 (versionNumbers v) = CellOk v
-        | otherwise = CellHigh v u
-
-    verify :: QSem -> PackageName -> Maybe Version -> Version -> IO Cell
-    verify qsem (display -> pkgName) u v
-        | not build = return $ cellDone u v
-        | otherwise = bracket (waitQSem qsem) (\_ -> signalQSem qsem) $ \() -> do
-            thrPutStrLn $ colorCode ColorCyan ++ pfx pkgName v ++ "Trying to build" ++ colorReset
-
-            (ec, o', e') <- readProcessWithExitCode
-                "cabal"
+    doVerify :: PackageName -> Version -> M Result
+    doVerify pkgName v | not verify = return ResultOk
+        | otherwise = runEarlyExit $ do
+            (ec, o, e) <- lift $ runWithGHC False dir ghcVersion "cabal"
                 [ "new-build"
-                , "-w", "ghc-" ++ display ghcVersion
+                , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion) ++ "-" ++ display pkgName ++ "-" ++ display v
+                , "-w", "ghc-" ++ display (toVersion ghcVersion)
                 , "--disable-tests", "--disable-benchmarks"
-                , "--constraint=" ++ pkgName ++ " ==" ++ display v
-                , "--ghc-options=" ++ ghcOptions
+                , "-j" ++ show jCabal
+                , "--constraint=" ++ display pkgName ++ "==" ++ display v
+                -- , "--ghc-options=" ++ ghcOptions
+                , "all"
+                , "--dependencies"
+                ]
+
+            when (isFailure ec) $ exit $ ResultDepFail ec o e
+
+            (ec', o', e') <- lift $ runWithGHC False dir ghcVersion "cabal"
+                [ "new-build"
+                , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion) ++ "-" ++ display pkgName ++ "-" ++ display v
+                , "-w", "ghc-" ++ display (toVersion ghcVersion)
+                , "--disable-tests", "--disable-benchmarks"
+                , "-j" ++ show jCabal
+                , "--constraint=" ++ display pkgName ++ "==" ++ display v
+                -- , "--ghc-options=" ++ ghcOptions
                 , "all"
                 ]
-                ""
-            o <- evaluate (force o')
-            e <- evaluate (force e')
-            case ec of
-                ExitSuccess   -> do
-                    thrPutStrLn $ colorCode ColorGreen ++ pfx pkgName v ++ "Build OK" ++ colorReset
-                    return $ cellDone u v
-                ExitFailure _ -> do
-                    thrPutStrLn $ colorCode ColorRed ++ pfx pkgName v ++ "Build failed" ++ colorReset
-                    thrPutStrLn o
-                    thrPutStrLn e
-                    thrPutStrLn $ colorCode ColorRed ++ pfx pkgName v ++ "Build failed" ++ colorReset
-                    return $ CellBuildError v o e
 
-    ghcOptions
-        | ghcVersion >= mkVersion [7,8] = "-j2 +RTS -A64m -I0 -qg -RTS"
-        | otherwise                     = "    +RTS -A64m -I0 -qg -RTS"
+            when (isFailure ec') $ exit $ ResultFail ec' o' e'
 
-allBuildDepends :: F.Foldable f => Version ->  f Package -> M.Map PackageName VersionRange
+            return ResultOk
+
+allBuildDepends :: Version -> GenericPackageDescription -> Map.Map PackageName VersionRange
 allBuildDepends ghcVersion
-    = M.map simplifyVersionRange
-    . M.unionsWith intersectVersionRanges
-    . map extractBuildDepends
-    . F.toList
+    = fmap simplifyVersionRange
+    . extractBuildDepends
   where
-    extractBuildDepends :: Package -> M.Map PackageName VersionRange
-    extractBuildDepends Pkg{pkgGpd} =
-        maybe M.empty libBD (condLibrary pkgGpd)
+    extractBuildDepends :: GenericPackageDescription -> Map.Map PackageName VersionRange
+    extractBuildDepends gpd =
+        maybe Map.empty libBD (condLibrary gpd)
 
     libBD :: PD.CondTree PD.ConfVar [Dependency] PD.Library
-          -> M.Map PackageName VersionRange
+          -> Map.Map PackageName VersionRange
     libBD
-        = M.fromListWith intersectVersionRanges
+        = Map.fromListWith intersectVersionRanges
         . map dependencyToPair
         . fst
         . simplifyCondTree (Right . evalConfVar)
@@ -236,9 +169,3 @@ allBuildDepends ghcVersion
     evalConfVar (PD.Impl GHC vr) = ghcVersion `withinRange` vr
     evalConfVar (PD.Impl _ _)    = False
     evalConfVar _                = True
-
-
-#endif
-
-
--}

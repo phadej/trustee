@@ -18,9 +18,9 @@ newtype GlobalOpts = GlobalOpts
 
 data Cmd
     = CmdNewBuild [String]
-    | CmdMatrix [FilePath]
+    | CmdMatrix [FilePath] [String]
     | CmdGet PackageName VersionRange
-    | CmdLowerBounds
+    | CmdLowerBounds Bool
   deriving Show
 
 -------------------------------------------------------------------------------
@@ -51,7 +51,15 @@ cmd = O.subparser $ mconcat
     [ O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
     , O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
     , O.command "get" $ O.info cmdGet $ O.progDesc "Fetch package sources"
+    , O.command "lowerbounds" $ O.info cmdLowerBounds $ O.progDesc "Find lowerbounds"
     ]
+
+cmdLowerBounds :: O.Parser Cmd
+cmdLowerBounds = CmdLowerBounds
+    <$> O.switch (mconcat
+        [ O.help "verify plans"
+        , O.long "verify"
+        ])
 
 cmdNewBuild :: O.Parser Cmd
 cmdNewBuild = CmdNewBuild <$> many (O.strArgument $ mconcat
@@ -60,10 +68,18 @@ cmdNewBuild = CmdNewBuild <$> many (O.strArgument $ mconcat
     ])
 
 cmdMatrix :: O.Parser Cmd
-cmdMatrix = CmdMatrix <$> many (O.strArgument $ mconcat
-    [ O.metavar "pkg-dir"
-    , O.help "package directories to include in matrix"
-    ])
+cmdMatrix = CmdMatrix <$> many pkgs <*> many constraints where
+    pkgs = O.strArgument $ mconcat
+        [ O.metavar "pkg-dir"
+        , O.help "package directories to include in matrix"
+        ]
+
+    constraints = O.strOption $ mconcat
+        [ O.short 'c'
+        , O.long "constraint"
+        , O.metavar ":constraint"
+        , O.help "Additional constraints"
+        ]
 
 cmdGet :: O.Parser Cmd
 cmdGet = CmdGet <$> name <*> (version <|> pure anyVersion) where

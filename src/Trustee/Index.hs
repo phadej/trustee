@@ -1,4 +1,4 @@
-module Trustee.Index (readIndex) where
+module Trustee.Index (Index, readIndex) where
 
 import Data.List                 (foldl')
 import Distribution.Compat.ReadP (char, munch1)
