@@ -17,6 +17,7 @@ newtype GlobalOpts = GlobalOpts
 
 data Cmd
     = CmdNewBuild [String]
+    | CmdMatrix [FilePath]
     | CmdLowerBounds
   deriving Show
 
@@ -46,10 +47,17 @@ globalOpts = GlobalOpts
 cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
     [ O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
+    , O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
     ]
 
 cmdNewBuild :: O.Parser Cmd
 cmdNewBuild = CmdNewBuild <$> many (O.strArgument $ mconcat
     [ O.metavar "arg"
     , O.help "arguments to cabal new-build"
+    ])
+
+cmdMatrix :: O.Parser Cmd
+cmdMatrix = CmdMatrix <$> many (O.strArgument $ mconcat
+    [ O.metavar "pkg-dir"
+    , O.help "package directories to include in matrix"
     ])
