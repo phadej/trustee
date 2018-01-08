@@ -1,6 +1,7 @@
 module Trustee.Options (
     Cmd (..),
     GlobalOpts (..),
+    Limit (..),
     parseOpts,
     ) where
 
@@ -20,7 +21,10 @@ data Cmd
     = CmdNewBuild [String]
     | CmdMatrix [FilePath] [String]
     | CmdGet PackageName VersionRange
-    | CmdLowerBounds Bool
+    | CmdBounds Bool Limit
+  deriving Show
+
+data Limit = LimitUpper | LimitLower
   deriving Show
 
 -------------------------------------------------------------------------------
@@ -51,15 +55,29 @@ cmd = O.subparser $ mconcat
     [ O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
     , O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
     , O.command "get" $ O.info cmdGet $ O.progDesc "Fetch package sources"
-    , O.command "lowerbounds" $ O.info cmdLowerBounds $ O.progDesc "Find lowerbounds"
+    , O.command "bounds" $ O.info cmdBounds $ O.progDesc "Find and check bounds"
     ]
 
-cmdLowerBounds :: O.Parser Cmd
-cmdLowerBounds = CmdLowerBounds
+cmdBounds :: O.Parser Cmd
+cmdBounds = CmdBounds
     <$> O.switch (mconcat
         [ O.help "verify plans"
         , O.long "verify"
         ])
+    <*> limit
+  where
+    limit = lower <|> upper
+
+    lower = O.flag' LimitLower $ mconcat
+        [ O.long "lower"
+        , O.help "Lower bounds"
+        ]
+
+    upper = O.flag' LimitUpper $ mconcat
+        [ O.long "upper"
+        , O.help "Upper bounds"
+        ]
+        
 
 cmdNewBuild :: O.Parser Cmd
 cmdNewBuild = CmdNewBuild <$> many (O.strArgument $ mconcat
