@@ -1,8 +1,7 @@
-module Trustee.LowerBounds where
+module Trustee.Bounds (cmdBounds) where
 
 import Control.Monad                         (when)
 import Control.Monad.IO.Class                (liftIO)
-import Data.Maybe                            (mapMaybe)
 import Distribution.Compiler                 (CompilerFlavor (..))
 import Distribution.Package                  (PackageName)
 import Distribution.PackageDescription       (GenericPackageDescription (..))
@@ -13,7 +12,7 @@ import Distribution.Types.CondTree           (simplifyCondTree)
 import Distribution.Types.Dependency         (Dependency (..))
 import Distribution.Version
        (Version, VersionRange, intersectVersionRanges, simplifyVersionRange,
-       withinRange)
+       versionNumbers, withinRange)
 import Path                                  (Abs, Dir, Path)
 import System.Exit                           (ExitCode (..))
 import System.FilePath.Glob                  (compile, globDir1)
@@ -23,17 +22,16 @@ import qualified Data.Set                        as Set
 import qualified Distribution.PackageDescription as PD
 import qualified Path
 
-import Trustee.GHC      hiding (index)
+import Trustee.GHC     hiding (index)
 import Trustee.Index
 import Trustee.Monad
-import Trustee.NewBuild (Result (..))
 import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
 import Trustee.Util
 
-cmdLowerBounds :: GlobalOpts -> Path Abs Dir -> Bool -> M ()
-cmdLowerBounds opts dir verify = do
+cmdBounds :: GlobalOpts -> Path Abs Dir -> Bool -> Limit -> M ()
+cmdBounds opts dir verify limit = do
     let ghcs = ghcsInRange (goGhcVersions opts)
     (jGHC, jCabal) <- jobs
     xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
@@ -43,14 +41,14 @@ cmdLowerBounds opts dir verify = do
             index <- liftIO readIndex
             gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
             cols <- fmap Map.unions $ forConcurrently ghcs $ \ghcVersion -> do
-                cells <- lowerBoundsForGhc verify jGHC jCabal dir index gpd ghcVersion
+                cells <- boundsForGhc verify jGHC jCabal limit dir index gpd ghcVersion
                 return $ Map.mapKeysMonotonic ((,) ghcVersion) cells
 
             putStrs [ renderTable $ makeTable ghcs cols ]
 
         _ -> fail "no .cabal file found"
 
-makeTable :: [GHCVer] -> Map.Map (GHCVer, PackageName) (Version, Result) -> [[Txt]]
+makeTable :: [GHCVer] -> Map.Map (GHCVer, PackageName) Result -> [[Txt]]
 makeTable ghcs m
     = (emptyTxt : map (mkTxt Black . display. toVersion) ghcs)
     : map mkRow pkgNames
@@ -60,37 +58,46 @@ makeTable ghcs m
     mkRow :: PackageName -> [Txt]
     mkRow pkgName
         = mkTxt Black (display pkgName)
-        : map (\g -> maybe emptyTxt (uncurry mkCell) $ Map.lookup (g, pkgName) m) ghcs
+        : map (\g -> maybe emptyTxt mkCell $ Map.lookup (g, pkgName) m) ghcs
 
-mkCell :: Version -> Result -> Txt
-mkCell v ResultOk         = mkTxt Green   $ display v
-mkCell v ResultDryFail {} = mkTxt Blue    $ display v
-mkCell v ResultDepFail {} = mkTxt Magenta $ display v
-mkCell v ResultFail {}    = mkTxt Red     $ display v
+data Result
+    = ResultOk      !Version
+    | ResultAlmost  !Version
+    | ResultNoPlan
+    | ResultDepFail !Version
+    | ResultFail    !Version
+  deriving Show
 
-lowerBoundsForGhc
+mkCell ::  Result -> Txt
+mkCell (ResultOk v)      = mkTxt Green   $ display v
+mkCell (ResultAlmost v)  = mkTxt Cyan    $ display v
+mkCell ResultNoPlan      = mkTxt Blue    "no-plan"
+mkCell (ResultDepFail v) = mkTxt Magenta $ display v
+mkCell (ResultFail v)    = mkTxt Red     $ display v
+
+boundsForGhc
     :: Bool
     -> Int -> Int
+    -> Limit
     -> Path Abs Dir
     -> Index
     -> GenericPackageDescription
     -> GHCVer
-    -> M (Map.Map PackageName (Version, Result))
-lowerBoundsForGhc verify _jGHC jCabal dir index gpd ghcVersion = do
+    -> M (Map.Map PackageName Result)
+boundsForGhc verify _jGHC jCabal limit dir index gpd ghcVersion = do
     let deps = allBuildDepends (toVersion ghcVersion) gpd
     let deps' = Map.intersectionWith withinRange' index deps
 
-    fmap mkMap $ forConcurrently (Map.toList deps') $ \(pkgName, vs) ->
-        (,) pkgName <$> findLowest pkgName Nothing vs
+    fmap Map.fromList $ forConcurrently (Map.toList deps') $ \(pkgName, vs) ->
+        fmap ((,) pkgName) $ findLowest pkgName Nothing $ case limit of
+            LimitLower -> vs
+            LimitUpper -> reverse vs
   where
     withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
 
-    mkMap :: [(PackageName, Maybe (Version, Result))] -> Map.Map PackageName (Version, Result)
-    mkMap = Map.fromList . mapMaybe sequence
-
-    findLowest :: PackageName -> Maybe Version -> [Version] -> M (Maybe (Version, Result))
-    findLowest _       _ []       = return Nothing
-    findLowest pkgName _ (v : vs) = do
+    findLowest :: PackageName -> Maybe Version -> [Version] -> M Result
+    findLowest _       _ []       = return ResultNoPlan
+    findLowest pkgName u (v : vs) = do
         (ec, _, _) <- runWithGHC True dir ghcVersion "cabal"
             [ "new-build"
             , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion) ++ "-" ++ display pkgName ++ "-" ++ display v
@@ -104,18 +111,22 @@ lowerBoundsForGhc verify _jGHC jCabal dir index gpd ghcVersion = do
             ]
 
         case ec of
-            ExitSuccess   ->   do
-                r <- doVerify pkgName v
-                return $ Just (v, r)
+            ExitSuccess   -> doVerify pkgName u v
             ExitFailure _ -> findLowest pkgName (Just v) vs
 
     isFailure (ExitFailure _) = True
     isFailure ExitSuccess     = False
 
-    doVerify :: PackageName -> Version -> M Result
-    doVerify pkgName v | not verify = return ResultOk
+    resultOk :: Maybe Version -> Version -> Result
+    resultOk Nothing v  = ResultOk v
+    resultOk (Just u) v
+        | take 2 (versionNumbers u) == take 2 (versionNumbers v) = ResultOk v
+        | otherwise = ResultAlmost v
+
+    doVerify :: PackageName -> Maybe Version -> Version -> M Result
+    doVerify pkgName u v | not verify = return $ resultOk u v
         | otherwise = runEarlyExit $ do
-            (ec, o, e) <- lift $ runWithGHC False dir ghcVersion "cabal"
+            (ec, _, _) <- lift $ runWithGHC False dir ghcVersion "cabal"
                 [ "new-build"
                 , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion) ++ "-" ++ display pkgName ++ "-" ++ display v
                 , "-w", "ghc-" ++ display (toVersion ghcVersion)
@@ -127,9 +138,9 @@ lowerBoundsForGhc verify _jGHC jCabal dir index gpd ghcVersion = do
                 , "--dependencies"
                 ]
 
-            when (isFailure ec) $ exit $ ResultDepFail ec o e
+            when (isFailure ec) $ exit $ ResultDepFail v
 
-            (ec', o', e') <- lift $ runWithGHC False dir ghcVersion "cabal"
+            (ec', _, _) <- lift $ runWithGHC False dir ghcVersion "cabal"
                 [ "new-build"
                 , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion) ++ "-" ++ display pkgName ++ "-" ++ display v
                 , "-w", "ghc-" ++ display (toVersion ghcVersion)
@@ -140,9 +151,9 @@ lowerBoundsForGhc verify _jGHC jCabal dir index gpd ghcVersion = do
                 , "all"
                 ]
 
-            when (isFailure ec') $ exit $ ResultFail ec' o' e'
+            when (isFailure ec') $ exit $ ResultFail v
 
-            return ResultOk
+            return $ resultOk u v
 
 allBuildDepends :: Version -> GenericPackageDescription -> Map.Map PackageName VersionRange
 allBuildDepends ghcVersion

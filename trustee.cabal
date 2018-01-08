@@ -15,6 +15,7 @@ copyright:           (c) 2018 Oleg Grenrus
 category:            Development
 build-type:          Simple
 cabal-version:       2.0
+tested-with:         GHC==8.2.2
 
 library
   exposed-modules:
@@ -23,7 +24,7 @@ library
     Trustee.Index
     Trustee.Get
     Trustee.GHC
-    Trustee.LowerBounds
+    Trustee.Bounds
     Trustee.Matrix
     Trustee.Monad
     Trustee.NewBuild
