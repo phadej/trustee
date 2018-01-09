@@ -1,10 +1,13 @@
 module Trustee.Matrix (cmdMatrix) where
 
+import Data.Char                 (isDigit)
 import Data.Function             (on)
+import Data.Functor.Classes      (liftCompare)
 import Data.List                 (sortBy)
-import Distribution.Compat.ReadP (munch1, satisfy, sepBy)
+import Distribution.Compat.ReadP (many, munch1, (+++))
 import Distribution.Text         (display)
 import Path                      (Abs, Dir, Path)
+import Data.Semigroup ((<>))
 
 import qualified Path
 
@@ -25,11 +28,21 @@ cmdMatrix opts dirs' cons = do
 
     putStrs [ renderTable $ makeTable ghcs xss ]
   where
-    -- TODO: parse as package identifier and compare on that
-    dirs = sortBy (flip compare `on` parts) dirs'
+    dirs = sortBy (liftCompare cmp `on` parts) dirs'
     parts
-        = maybeReadP (sepBy (munch1 (`notElem` "._-/")) (satisfy (`elem`  "._-/")))
+        = maybeReadP partsP
         . Path.toFilePath . Path.dirname
+
+    partsP = many (fmap Left (munch1 (not . isDigit)) +++ fmap (Right . read) (munch1 isDigit))
+
+    cmp :: [Either String Int] -> [Either String Int] -> Ordering
+    cmp [] [] = EQ
+    cmp [] _  = LT
+    cmp _  [] = GT
+    cmp (Right n : xs) (Right m : ys) = compare m n <> cmp xs ys
+    cmp (Right _ : _)  (Left _  : _)  = LT
+    cmp (_       : _)  (Right _ : _)  = GT
+    cmp (Left s  : xs) (Left t  : ys) = compare s t <> cmp xs ys
 
     makeTable :: [GHCVer] -> [[Result]] -> [[Txt]]
     makeTable ghcs xss

@@ -81,7 +81,7 @@ runWithGHC dry dir ghcVersion cmd args = mkM action
   where
     dir' = Path.toFilePath $ Path.dirname dir
     formatted = cmd ++ " " ++ unwords args
-    color ExitSuccess     = Green
+    color ExitSuccess     = if dry then Cyan else Green
     color (ExitFailure _) = if dry then Magenta else Red
 
     action env = bracket acquire release $ \(m, n) -> do
