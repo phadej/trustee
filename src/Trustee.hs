@@ -8,7 +8,7 @@ import Trustee.Get
 import Trustee.Matrix
 import Trustee.Monad
 import Trustee.NewBuild
-import Trustee.Options  (Cmd (..), parseOpts)
+import Trustee.Options  (Cmd (..), goPlanParams, parseOpts)
 
 import qualified Path.IO as Path
 
@@ -16,11 +16,12 @@ main :: IO ()
 main = do
     cwd <- getCurrentDir
     (opts, cmd) <- parseOpts
-    let cfg = defaultConfig
+    let pp = goPlanParams opts
+    cfg <- readConfig
     case cmd of
-        CmdBounds verify l -> runM cfg $ cmdBounds opts cwd verify l
-        CmdNewBuild args   -> runM cfg $ cmdNewBuild opts cwd args
-        CmdGet pkgname vr  -> cmdGet pkgname vr
-        CmdMatrix dirs cs  -> do
+        CmdBounds verify l -> runM cfg pp $ cmdBounds opts cwd verify l
+        CmdNewBuild args   -> runM cfg pp $ cmdNewBuild opts cwd args
+        CmdGet pkgname vr  -> cmdGet opts pkgname vr
+        CmdMatrix test dirs -> do
             dirs' <- traverse (Path.resolveDir cwd) dirs
-            runM cfg $ cmdMatrix opts dirs' cs
+            runM cfg pp $ cmdMatrix opts test dirs'
