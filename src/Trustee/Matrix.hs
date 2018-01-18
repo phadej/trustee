@@ -4,29 +4,31 @@ import Data.Char                 (isDigit)
 import Data.Function             (on)
 import Data.Functor.Classes      (liftCompare)
 import Data.List                 (sortBy)
+import Data.Maybe                (mapMaybe)
+import Data.Semigroup            ((<>))
 import Distribution.Compat.ReadP (many, munch1, (+++))
 import Distribution.Text         (display)
 import Path                      (Abs, Dir, Path)
-import Data.Semigroup ((<>))
 
 import qualified Path
 
 import Trustee.GHC
 import Trustee.Monad
-import Trustee.NewBuild (Result (..), matrixRow)
+import Trustee.NewBuild (Result (..), matrixRow')
 import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
 import Trustee.Util
 
-cmdMatrix :: GlobalOpts -> [Path Abs Dir] -> [String] -> M ()
-cmdMatrix opts dirs' cons = do
+cmdMatrix :: GlobalOpts -> Bool -> [Path Abs Dir] -> M ()
+cmdMatrix opts test dirs' = do
     let ghcs = reverse $ ghcsInRange (goGhcVersions opts)
-    let consOpts = map ("--constraint=" ++) cons
-    xss <- forConcurrently dirs $
-        matrixRow ghcs $ ["--disable-tests", "--disable-benchmarks", "all" ] ++ consOpts
+    xss <- forConcurrently dirs $ matrixRow' test ghcs mempty
 
     putStrs [ renderTable $ makeTable ghcs xss ]
+
+    -- TODO: some errors
+    putStrs $ take 2 $ mapMaybe isFail $ concat xss
   where
     dirs = sortBy (liftCompare cmp `on` parts) dirs'
     parts
@@ -56,6 +58,10 @@ cmdMatrix opts dirs' cons = do
 
     mkCell :: Result -> Txt
     mkCell ResultOk         = mkTxt Green   "OK"
+    mkCell ResultTestFail   = mkTxt Yellow  "TEST"
     mkCell ResultDryFail {} = mkTxt Blue    "NO-IP"
     mkCell ResultDepFail {} = mkTxt Magenta "DEP"
     mkCell ResultFail {}    = mkTxt Red     "FAIL"
+
+    isFail (ResultFail _ o e) = Just (o ++ "\n" ++ e)
+    isFail _                  = Nothing

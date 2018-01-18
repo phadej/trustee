@@ -14,7 +14,7 @@ import Trustee.Index
 
 cmdGet :: PackageName -> VersionRange -> IO ()
 cmdGet pkgname vr = do
-    index <- readIndex
+    index <- fst <$> readIndex Nothing
     for_ (Map.lookup pkgname index) $ \vs -> for_ vs $ \v ->
         when (v `withinRange` vr) $ do
             let dirname = display pkgname ++ "-" ++ display v

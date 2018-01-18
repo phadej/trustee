@@ -1,6 +1,8 @@
 module Trustee.Index (Index, readIndex) where
 
 import Data.List                 (foldl')
+import Data.Time                 (UTCTime)
+import Data.Time.Clock.POSIX     (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Distribution.Compat.ReadP (char, munch1)
 import Distribution.Package      (PackageName)
 import Distribution.Text         (parse)
@@ -18,23 +20,38 @@ import Trustee.Util
 
 type Index = Map.Map PackageName (Set.Set Version)
 
-readIndex :: IO Index
-readIndex = do
+data Pair = Pair !Index !Tar.EpochTime
+
+toLazy :: Pair -> (Index, UTCTime)
+toLazy (Pair index ts) = (index, posixSecondsToUTCTime $ fromIntegral ts)
+
+readIndex :: Maybe UTCTime -> IO (Index, UTCTime)
+readIndex indexState = do
     c <- getAppUserDataDirectory "cabal"
     -- TODO: we could read ~/.cabal/config
     let indexTar = c </> "packages/hackage.haskell.org/01-index.tar"
     contents <- LBS.readFile indexTar
-    return $ foldl' add Map.empty $ entriesToList $ Tar.read contents
+    return $ toLazy $ foldl' add start $ entriesToList $ Tar.read contents
   where
+    start = Pair mempty 0
+
+    predicate = case indexState of
+        Just t  -> \entry -> Tar.entryTime entry <= truncate (utcTimeToPOSIXSeconds t)
+        Nothing -> const True
+
     entriesToList :: Tar.Entries Tar.FormatError -> [Tar.Entry]
     entriesToList Tar.Done        = []
     entriesToList (Tar.Fail s)    = error (show s)
-    entriesToList (Tar.Next e es) = e : entriesToList es
+    entriesToList (Tar.Next e es)
+        | predicate e = e : entriesToList es
+        | otherwise   = entriesToList es
 
-    add m entry = case maybeReadP p $ Tar.fromTarPathToPosixPath $ Tar.entryTarPath entry of
-        Just (pkgName, version) ->
-            Map.insertWith Set.union pkgName (Set.singleton version) m
-        _ -> m
+    add :: Pair -> Tar.Entry -> Pair
+    add pair@(Pair m _) entry = case maybeReadP p $ Tar.fromTarPathToPosixPath $ Tar.entryTarPath entry of
+        Just (pkgName, version) -> Pair
+            (Map.insertWith Set.union pkgName (Set.singleton version) m)
+            (Tar.entryTime entry)
+        _ -> pair
 
     p = do
         pkgName <- parse
