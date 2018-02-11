@@ -110,7 +110,7 @@ runM
     -> Map PackageName VersionRange   -- ^ constraints
     -> M a                            -- ^ action
     -> IO a
-runM cfg is cons m = displayConsoleRegions $ withConsoleRegion Linear $ \region -> do
+runM cfg is cons m = withLock $ displayConsoleRegions $ withConsoleRegion Linear $ \region -> do
     -- Start times
     tz           <- getCurrentTimeZone
     startUtcTime <- getCurrentTime
@@ -165,7 +165,7 @@ runM cfg is cons m = displayConsoleRegions $ withConsoleRegion Linear $ \region 
             , formatTime defaultTimeLocale "%T" eta
             ]
 
-    x <- withLock $ runM' env m
+    x <- runM' env m
     endTime <- getTime Monotonic
 
     -- Print stats
