@@ -119,7 +119,7 @@ matrixRow' test ghcs constraints dir = forConcurrently ghcs $ \ghcVersion -> run
     let testBins = mapMaybe testBin comps
 
     testsFailed <- fmap or $ lift $ forConcurrently testBins $ \exe -> do
-        (ec6, _, _) <- runWithGHC ModeBuild' dir ghcVersion exe []
+        (ec6, _, _) <- runWithGHC ModeBld' dir ghcVersion exe []
         return (isFailure ec6)
 
     when testsFailed $ exit ResultTestFail
@@ -163,7 +163,7 @@ matrixRow ghcs args dir = do
 
         when (isFailure ec1) $ exit $ ResultDepFail ec1 o1 e1
 
-        (ec2, o2, e2) <- lift $ runWithGHC ModeBuild' dir ghcVersion "cabal" $
+        (ec2, o2, e2) <- lift $ runWithGHC ModeBld' dir ghcVersion "cabal" $
             [ "new-build"
             , "-w", "ghc-" ++ display (toVersion ghcVersion)
             , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion)

@@ -77,12 +77,16 @@ data Stats' a = Stats
 
 type Stats = Stats' Int
 
+data GHCLock
+    = GHCStore       -- ^ dependencies, exclusive (writes to store)
+    | GHCBuild !Int  -- ^ build,        shared (only reads store)
+
 data Env = Env
     { envConfig      :: Config
     , envIndexState  :: Maybe UTCTime
     , envConstraints :: Map PackageName VersionRange
     , envThreads     :: TVar Int
-    , envGhcLocks    :: PerGHC (TVar Bool)
+    , envGhcLocks    :: PerGHC (TVar (Maybe GHCLock))
     , envClock       :: TVar TimeSpec
     , envTimeStats   :: TVar (Stats' (TD.TDigest 25))
     , envTimeSums    :: TVar (Stats' Double)
@@ -99,7 +103,7 @@ envGhcJobs = cfgGhcJobs . envConfig
 newEnv :: Config -> Maybe UTCTime -> Map PackageName VersionRange -> TimeSpec -> IO Env
 newEnv cfg is cons ts = atomically $ Env cfg is cons
     <$> newTVar (cfgThreads cfg)
-    <*> sequence (pure (newTVar True))
+    <*> sequence (pure (newTVar Nothing))
     <*> newTVar ts
     <*> newTVar (Stats mempty mempty mempty)
     <*> newTVar (Stats 0 0 0)
@@ -229,7 +233,7 @@ data Mode
 data Mode'
     = ModeDry'
     | ModeDep'
-    | ModeBuild'
+    | ModeBld'
   deriving (Eq, Ord, Enum, Bounded, Show)
 
 toMode' :: Mode -> Mode'
@@ -237,8 +241,8 @@ toMode' ModeDry       = ModeDry'
 toMode' ModeDryTest   = ModeDry'
 toMode' ModeDep       = ModeDep'
 toMode' ModeDepTest   = ModeDep'
-toMode' ModeBuild     = ModeBuild'
-toMode' ModeBuildTest = ModeBuild'
+toMode' ModeBuild     = ModeBld'
+toMode' ModeBuildTest = ModeBld'
 
 findPlan :: Path Abs Dir -> GHCVer -> Map PackageName VersionRange -> M Cabal.PlanJson
 findPlan dir ghcVersion constraints = liftIO $ fmap fst $
@@ -289,7 +293,7 @@ runCabal mode dir ghcVersion constraints = do
     modeArg = case mode' of
         ModeDry'       -> ["--dry-run"]
         ModeDep'       -> ["--dep"]
-        ModeBuild'     -> []
+        ModeBld'     -> []
     mkConstraint pkgName vr = "--constraint=" ++ display pkgName ++ display vr
 
     buildDirSuffix constraintsS
@@ -316,7 +320,7 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         modifyTVar' (envDoneStats env) (modifyStats succ)
 
     modifyStats f s = case mode of
-        ModeBuild' -> s { statsBuildRuns = f (statsBuildRuns s) }
+        ModeBld' -> s { statsBuildRuns = f (statsBuildRuns s) }
         ModeDep'   -> s { statsDepRuns   = f (statsDepRuns s) }
         ModeDry'   -> s { statsDryRuns   = f (statsDryRuns s) }
 
@@ -336,28 +340,53 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         e <- evaluate (force e')
         return (ec, o, e)
       where
-        threads
-            | dry = 1
-            | otherwise = ghcJobs (envGhcJobs env) ghcVersion * envCabalJobs env
+        threads = case mode of
+            ModeDry'   -> 1
+            ModeDep'   -> envCabalJobs env
+            ModeBld' -> ghcJobs (envGhcJobs env) ghcVersion
 
         ghcLock = index (envGhcLocks env) ghcVersion
         threadLock = envThreads env
 
-        acquire = do
-            atomically $ do
-                unless dry $ do
+        acquire = atomically $ do
+            case mode of
+                ModeDry' -> pure ()
+                ModeDep' -> do
                     b <- readTVar ghcLock
-                    unless b retry
-                    writeTVar ghcLock False
+                    case b of
+                        Nothing       -> writeTVar ghcLock (Just GHCStore)
+                        Just GHCStore -> pure ()
+                        _             -> retry
+                ModeBld' -> do
+                    b <- readTVar ghcLock
+                    case b of
+                        Nothing           -> writeTVar ghcLock (Just (GHCBuild 0))
+                        Just (GHCBuild n) -> writeTVar ghcLock (Just (GHCBuild (succ n)))
+                        _                 -> retry
 
-                n <- readTVar threadLock
-                unless (n >= threads) retry
+            n <- readTVar threadLock
+            unless (n >= threads) retry
 
-                let n' = n - threads
-                writeTVar threadLock $! n'
+            let n' = n - threads
+            writeTVar threadLock $! n'
 
         release _ = atomically $ do
-            unless dry $ writeTVar ghcLock True
+            case mode of
+                ModeDry' -> pure ()
+                ModeDep' -> do
+                    b <- readTVar ghcLock
+                    case b of
+                        Nothing       -> pure () -- weird
+                        Just GHCStore -> writeTVar ghcLock Nothing
+                        _             -> retry
+                ModeBld' -> do
+                    b <- readTVar ghcLock
+                    case b of
+                        Nothing         -> pure () -- weird
+                        Just (GHCBuild n)
+                            | n <= 0    -> writeTVar ghcLock Nothing
+                            | otherwise -> writeTVar ghcLock (Just (GHCBuild (pred n)))
+                        _               -> retry
             n <- readTVar threadLock
             writeTVar threadLock $! n + threads
 
