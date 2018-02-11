@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -25,15 +26,18 @@ import Control.Monad.IO.Class     (MonadIO (..))
 import Control.Monad.Trans.Reader (ReaderT (..))
 import Data.List                  (isPrefixOf)
 import Data.Map                   (Map)
-import Data.Semigroup             (Semigroup (..))
-import Data.Time                  (UTCTime, defaultTimeLocale, formatTime)
+import Data.Maybe                 (fromMaybe)
+import Data.Time
+       (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime,
+       getCurrentTimeZone, utcToLocalTime)
 import Distribution.Package       (PackageName)
 import Distribution.Text          (display)
 import Distribution.Version
        (VersionRange, intersectVersionRanges, simplifyVersionRange)
 import Foreign.C.Types            (CClock (..))
 import Path                       (Abs, Dir, Path)
-import System.Clock               (Clock (Monotonic), getTime, toNanoSecs)
+import System.Clock
+       (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
 import System.Console.Concurrent  (outputConcurrent)
 import System.Console.Regions
        (RegionLayout (Linear), displayConsoleRegions, setConsoleRegion,
@@ -49,6 +53,7 @@ import qualified Crypto.Hash.SHA512       as SHA512
 import qualified Data.Binary              as Binary
 import qualified Data.ByteString.Base16   as BS16
 import qualified Data.Map.Strict          as Map
+import qualified Data.TDigest             as TD
 import qualified Data.Text                as T
 import qualified Data.Text.Encoding       as TE
 import qualified Path
@@ -56,6 +61,8 @@ import qualified System.Process           as Process
 
 import Trustee.Config
 import Trustee.GHC
+import Trustee.Lock
+import Trustee.Table
 import Trustee.Txt
 
 newtype M a = M { unM :: ReaderT Env IO a }
@@ -76,7 +83,8 @@ data Env = Env
     , envConstraints :: Map PackageName VersionRange
     , envThreads     :: TVar Int
     , envGhcLocks    :: PerGHC (TVar Bool)
-    , envTimeStats   :: TVar (Stats' (Average Double))
+    , envClock       :: TVar TimeSpec
+    , envTimeStats   :: TVar (Stats' (TD.TDigest 25))
     , envRunStats    :: TVar Stats
     , envDoneStats   :: TVar Stats
     }
@@ -87,15 +95,15 @@ envCabalJobs = cfgCabalJobs . envConfig
 envGhcJobs :: Env -> Int
 envGhcJobs = cfgGhcJobs . envConfig
 
-newEnv :: Config -> Maybe UTCTime -> Map PackageName VersionRange ->  IO Env
-newEnv cfg is cons = atomically $ Env cfg is cons
+newEnv :: Config -> Maybe UTCTime -> Map PackageName VersionRange -> TimeSpec -> IO Env
+newEnv cfg is cons ts = atomically $ Env cfg is cons
     <$> newTVar (cfgThreads cfg)
     <*> sequence (pure (newTVar True))
+    <*> newTVar ts
     <*> newTVar (Stats mempty mempty mempty)
     <*> newTVar (Stats 0 0 0)
     <*> newTVar (Stats 0 0 0)
 
--- TODO: add lock here!
 runM
     :: Config                         -- ^ configuration
     -> Maybe UTCTime                  -- ^ index state
@@ -103,34 +111,61 @@ runM
     -> M a                            -- ^ action
     -> IO a
 runM cfg is cons m = displayConsoleRegions $ withConsoleRegion Linear $ \region -> do
-    env <- newEnv cfg is cons
+    -- Start times
+    tz           <- getCurrentTimeZone
+    startUtcTime <- getCurrentTime
+    startTime    <- getTime Monotonic
 
+    -- Environment
+    env <- newEnv cfg is cons startTime
+
+    -- Stats region
     setConsoleRegion region $ do
-        Stats dry dep build    <- readTVar (envDoneStats env)
-        Stats dry' dep' build' <- readTVar (envRunStats env)
-        -- TODO: learn this coefficients from data!
-        -- Stats {statsDryRuns = "3.138", statsDepRuns = "0.151", statsBuildRuns = "84.700"
-        let done = 3 * dry + 1 * dep + 85 * build
+        Stats dryT depT bldT <- readTVar (envTimeStats env)
+        Stats dryD depD bldD <- readTVar (envDoneStats env)
+        Stats dryR depR bldR <- readTVar (envRunStats env)
+
+        let dryK = fromMaybe   3 $ TD.quantile 0.8 dryT
+        let depK = fromMaybe 120 $ TD.quantile 0.8 depT
+        let bldK = fromMaybe  60 $ TD.quantile 0.8 bldT
+
+        let withK k x = k * fromIntegral x
+
+        let done = withK dryK dryD + withK depK depD + withK bldK bldD
         -- dep coefficient is done's dep + build, because build is often
         -- blocked (not visible because of >>=)
-        let run  = 3 * dry' + 86 * dep' + 85 * build'
+        let run  = withK (dryK + depK + bldK) dryR + withK (depK + bldK) depR + withK bldK bldR
+
+        -- completion percent
+        let percent = done / (done + run)
+
+        -- ETA
+        currTime <- readTVar (envClock env)
+        let diff = fromIntegral (toNanoSecs (currTime - startTime)) / (1e9 :: Double)
+        let esti = diff / percent
+        let eta  = utcToLocalTime tz $ addUTCTime (realToFrac esti) startUtcTime
+
         return $ T.pack $ concat
             [ "dry: "
-            , show dry
-            , ";  dep: "
-            , show dep
-            , ";  bld: "
-            , show build
-            , ";  queue: "
-            , show (dry' + dep' + build')
-            , ";  done: "
-            , printf "%.02f" $ (100 :: Double) *
-                fromIntegral done / fromIntegral (done + run)
+            , show dryD
+            , "/"
+            , show (dryD + dryR)
+            , "   dep: "
+            , show depD
+            , "/"
+            , show (depD + depR)
+            , "   bld: "
+            , show bldD
+            , "/"
+            , show (bldD + bldR)
+            , "   done: "
+            , printf "%.02f" $ 100 * percent
             , "%"
+            , "   eta: "
+            , formatTime defaultTimeLocale "%T" eta
             ]
 
-    startTime <- getTime Monotonic
-    x <- runM' env m
+    x <- withLock $ runM' env m
     endTime <- getTime Monotonic
 
     -- Print stats
@@ -138,15 +173,16 @@ runM cfg is cons m = displayConsoleRegions $ withConsoleRegion Linear $ \region 
     stats <- readTVarIO (envDoneStats env)
     timeStats <- readTVarIO (envTimeStats env)
 
-    let formatStats f (Stats dry dep bld) = concat
-            [ "dry: " ++ f dry
-            , "   dep: " ++ f dep
-            , "   bld: " ++ f bld
-            , "\n"
-            ] :: String
+    let formatStats header f (Stats dry dep bld) = map (mkTxt Black) $
+            header : [ f dry , f dep , f bld ]
 
-    outputConcurrent $ formatStats (printf "%6d ") stats
-    outputConcurrent $ formatStats (printf "%6.03fs" . getAverage) timeStats
+    outputConcurrent $ renderTable
+        [ [ emptyTxt, mkTxt Black "dry", mkTxt Black "dep", mkTxt Black "build" ]
+        , formatStats "counts"  (printf "%d ") stats
+        , formatStats "q50"     (printf "%.03fs" . fromMaybe 0 . TD.quantile 0.5) timeStats
+        , formatStats "q90"     (printf "%.03fs" . fromMaybe 0 . TD.quantile 0.9) timeStats
+        ]
+
     outputConcurrent $
         let ProcessTimes _ _ _ (CClock u') (CClock s') = processTimes
             e = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
@@ -284,7 +320,9 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         (ec, o', e') <- Process.readCreateProcessWithExitCode process ""
         endTime <- getTime Monotonic
         let diff = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
-        atomically $ modifyTVar' (envTimeStats env) (modifyStats (mkAverage diff <>))
+        atomically $ do
+            modifyTVar' (envTimeStats env) (modifyStats (TD.insert diff))
+            writeTVar (envClock env) endTime
         outputConcurrent $  dir' ++ " " ++ colored (color ec) formatted ++ printf " %.03fs" diff ++ "\n"
         o <- evaluate (force o')
         e <- evaluate (force e')
@@ -325,31 +363,3 @@ askConstraints c = mkM $ \env -> pure
 
 askIndexState :: M (Maybe UTCTime)
 askIndexState = mkM $ return . envIndexState
-
--------------------------------------------------------------------------------
--- Average
--------------------------------------------------------------------------------
-
--- | Numerically stable average. Weighted average to be precise.
---
--- >>> getAverage $ foldMap mkAverage [1,2,4,7] :: Rational
--- 7 % 2
-data Average a = Average { _samples :: !a, getAverage :: !a }
-  deriving (Eq, Show)
-
--- | Make 'Average' with 1 as a sample size.
-mkAverage :: Num a => a -> Average a
-mkAverage x = Average 1 x
-
-instance (Eq a, Fractional a) => Semigroup (Average a) where
-    a@(Average n x) <> b@(Average n' x')
-        | n == 0    = b
-        | n' == 0   = a
-        | otherwise = Average m y
-      where
-        m = n + n'
-        y = (n * x + n' * x') / m
-
-instance (Eq a, Fractional a) => Monoid (Average a) where
-    mempty = Average 0 0
-    mappend = (<>)

@@ -1,21 +1,25 @@
 module Trustee.Lock (withLock) where
 
-import Control.Concurrent   (threadDelay)
-import Control.Exception    (bracket, handle)
-import Data.Foldable        (for_)
-import Data.Function        ((&))
-import GHC.IO.Handle.Lock   (LockMode (ExclusiveLock), hTryLock)
+import Control.Concurrent        (threadDelay)
+import Control.Exception         (bracket, handle)
+import Data.Foldable             (for_)
+import Data.Function             ((&))
+import GHC.IO.Handle.Lock        (LockMode (ExclusiveLock), hTryLock)
+import System.Console.Concurrent (outputConcurrent)
+import System.Console.Regions
+       (RegionLayout (Linear), closeConsoleRegion, setConsoleRegion,
+       withConsoleRegion)
 import System.Directory
        (XdgDirectory (..), createDirectoryIfMissing, emptyPermissions,
        getXdgDirectory, setOwnerExecutable, setOwnerReadable,
        setOwnerSearchable, setOwnerWritable, setPermissions)
-import System.FilePath      ((</>))
+import System.FilePath           ((</>))
 import System.IO
-       (IOMode (ReadWriteMode), hClose, hFlush, hPutStrLn, openFile, stderr)
-import System.Posix.Process (getProcessID)
-import System.Posix.Types   (CPid (..))
-import System.Process       (callProcess)
-import Text.Read            (readMaybe)
+       (IOMode (ReadWriteMode), hClose, hFlush, openFile)
+import System.Posix.Process      (getProcessID)
+import System.Posix.Types        (CPid (..))
+import System.Process            (readProcessWithExitCode)
+import Text.Read                 (readMaybe)
 
 withLock :: IO a -> IO a
 withLock action = do
@@ -30,27 +34,29 @@ withLock action = do
     let lockFile = cacheDir </> "lock"
     let pidFile  = cacheDir </> "pid"
     let open = openFile lockFile ReadWriteMode
-    let close h = hClose h
-    bracket open close (loop lockFile pidFile 16)
+    withConsoleRegion Linear $ \region ->
+        bracket open hClose (loop region lockFile pidFile)
   where
     doNothing :: IOError -> IO ()
     doNothing _ = return ()
 
-    loop lockFile pidFile interval h = do
+    loop region lockFile pidFile h = do
         l <- hTryLock h ExclusiveLock
         if l
         then do
             CPid pid <- getProcessID
             writeFile pidFile (show pid)
             hFlush h
+            closeConsoleRegion region
             action
         else do
-            hPutStrLn stderr $ "other trustee process running"
+            outputConcurrent "other trustee process running"
             handle doNothing $ do
                 mpid <- readMaybe <$> readFile pidFile
-                for_ mpid $ \pid -> callProcess "ps" ["-f", "--cumulative", show (pid :: Int)]
-            hPutStrLn stderr $ "sleeping for " ++ show interval ++ " seconds"
+                for_ mpid $ \pid -> do
+                    (_, out, _) <- readProcessWithExitCode "ps" ["-f", "--cumulative", show (pid :: Int)] ""
+                    setConsoleRegion region out
 
-            -- wait 10 seconds, and try again
-            threadDelay $ interval * 1000 * 1000
-            loop lockFile pidFile (min 300 $ interval + interval `div` 2) h
+            -- wait 5 seconds, and try again
+            threadDelay $ 5 * 1000 * 1000
+            loop region lockFile pidFile h
