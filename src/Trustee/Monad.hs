@@ -85,6 +85,7 @@ data Env = Env
     , envGhcLocks    :: PerGHC (TVar Bool)
     , envClock       :: TVar TimeSpec
     , envTimeStats   :: TVar (Stats' (TD.TDigest 25))
+    , envTimeSums    :: TVar (Stats' Double)
     , envRunStats    :: TVar Stats
     , envDoneStats   :: TVar Stats
     }
@@ -101,6 +102,7 @@ newEnv cfg is cons ts = atomically $ Env cfg is cons
     <*> sequence (pure (newTVar True))
     <*> newTVar ts
     <*> newTVar (Stats mempty mempty mempty)
+    <*> newTVar (Stats 0 0 0)
     <*> newTVar (Stats 0 0 0)
     <*> newTVar (Stats 0 0 0)
 
@@ -122,16 +124,18 @@ runM cfg is cons m = withLock $ displayConsoleRegions $ withConsoleRegion Linear
     -- Stats region
     setConsoleRegion region $ do
         Stats dryT depT bldT <- readTVar (envTimeStats env)
+        Stats dryW depW bldW <- readTVar (envTimeSums env)
         Stats dryD depD bldD <- readTVar (envDoneStats env)
         Stats dryR depR bldR <- readTVar (envRunStats env)
 
-        let dryK = fromMaybe   3 $ TD.quantile 0.8 dryT
-        let depK = fromMaybe 120 $ TD.quantile 0.8 depT
-        let bldK = fromMaybe  60 $ TD.quantile 0.8 bldT
+        let dryK = fromMaybe   2 $ TD.quantile 0.6 dryT
+        let depK = fromMaybe 120 $ TD.quantile 0.6 depT
+        let bldK = fromMaybe  60 $ TD.quantile 0.6 bldT
 
         let withK k x = k * fromIntegral x
 
-        let done = withK dryK dryD + withK depK depD + withK bldK bldD
+        let done  = dryW + depW + bldW
+        let done' = withK dryK dryD + withK depK depD + withK bldK bldD
         -- dep coefficient is done's dep + build, because build is often
         -- blocked (not visible because of >>=)
         let run  = withK (dryK + depK + bldK) dryR + withK (depK + bldK) depR + withK bldK bldR
@@ -163,6 +167,7 @@ runM cfg is cons m = withLock $ displayConsoleRegions $ withConsoleRegion Linear
             , "%"
             , "   eta: "
             , formatTime defaultTimeLocale "%T" eta
+            , "  dbg: " ++ show (done, done')
             ]
 
     x <- runM' env m
@@ -170,8 +175,9 @@ runM cfg is cons m = withLock $ displayConsoleRegions $ withConsoleRegion Linear
 
     -- Print stats
     processTimes <- getProcessTimes
-    stats <- readTVarIO (envDoneStats env)
-    timeStats <- readTVarIO (envTimeStats env)
+    stats        <- readTVarIO (envDoneStats env)
+    timeStats    <- readTVarIO (envTimeStats env)
+    timeSums     <- readTVarIO (envTimeSums env)
 
     let formatStats header f (Stats dry dep bld) = map (mkTxt Black) $
             header : [ f dry , f dep , f bld ]
@@ -181,6 +187,7 @@ runM cfg is cons m = withLock $ displayConsoleRegions $ withConsoleRegion Linear
         , formatStats "counts"  (printf "%d ") stats
         , formatStats "q50"     (printf "%.03fs" . fromMaybe 0 . TD.quantile 0.5) timeStats
         , formatStats "q90"     (printf "%.03fs" . fromMaybe 0 . TD.quantile 0.9) timeStats
+        , formatStats "total"   (printf "%.03fs") timeSums
         ]
 
     outputConcurrent $
@@ -321,6 +328,7 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         endTime <- getTime Monotonic
         let diff = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
         atomically $ do
+            modifyTVar' (envTimeSums env)  (modifyStats (+ diff))
             modifyTVar' (envTimeStats env) (modifyStats (TD.insert diff))
             writeTVar (envClock env) endTime
         outputConcurrent $  dir' ++ " " ++ colored (color ec) formatted ++ printf " %.03fs" diff ++ "\n"
