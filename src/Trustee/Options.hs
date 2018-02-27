@@ -1,6 +1,8 @@
 module Trustee.Options (
     Cmd (..),
     GlobalOpts (..),
+    goIndexState,
+    PlanParams (..),
     Limit (..),
     parseOpts,
     ) where
@@ -18,8 +20,17 @@ import qualified Options.Applicative as O
 
 data GlobalOpts = GlobalOpts
     { goGhcVersions :: VersionRange
-    , goConstraints :: Map PackageName VersionRange
-    , goIndexState  :: Maybe UTCTime
+    , goPlanParams  :: PlanParams
+    }
+  deriving Show
+
+goIndexState :: GlobalOpts -> Maybe UTCTime
+goIndexState = ppIndexState . goPlanParams
+
+data PlanParams = PlanParams
+    { ppConstraints :: Map PackageName VersionRange -- TODO: support installed
+    , ppAllowNewer  :: [String]                     -- TODO: proper type
+    , ppIndexState  :: Maybe UTCTime
     }
   deriving Show
 
@@ -44,11 +55,14 @@ parseOpts = O.execParser $ O.info ((,) <$> globalOpts <*> cmd <**> O.helper) $ m
     ]
 
 globalOpts :: O.Parser GlobalOpts
-globalOpts = GlobalOpts
+globalOpts = mkGlobalOpts
     <$> ghcs
     <*> fmap mkConstraintMap (many constraints)
+    <*> many allowNewer
     <*> optional indexState
   where
+    mkGlobalOpts x0 x1 x2 x3 = GlobalOpts x0 (PlanParams x1 x2 x3)
+
     option x ms = O.option x (mconcat ms)
 
     ghcs = option (O.maybeReader simpleParse)
@@ -63,6 +77,12 @@ globalOpts = GlobalOpts
         , O.long "constraint"
         , O.metavar ":constraint"
         , O.help "Additional constraints"
+        ]
+
+    allowNewer = O.strOption $ mconcat
+        [ O.long "allow-newer"
+        , O.metavar "pkg:dep"
+        , O.help "Allow newer versions of packags"
         ]
 
     indexState = option (O.maybeReader $ \s -> iso s <|> stamp s)

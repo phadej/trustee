@@ -62,6 +62,7 @@ import qualified System.Process           as Process
 import Trustee.Config
 import Trustee.GHC
 import Trustee.Lock
+import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
 
@@ -83,8 +84,7 @@ data GHCLock
 
 data Env = Env
     { envConfig      :: Config
-    , envIndexState  :: Maybe UTCTime
-    , envConstraints :: Map PackageName VersionRange
+    , envPlanParams  :: PlanParams
     , envThreads     :: TVar Int
     , envGhcLocks    :: PerGHC (TVar (Maybe GHCLock))
     , envClock       :: TVar TimeSpec
@@ -100,8 +100,8 @@ envCabalJobs = cfgCabalJobs . envConfig
 envGhcJobs :: Env -> Int
 envGhcJobs = cfgGhcJobs . envConfig
 
-newEnv :: Config -> Maybe UTCTime -> Map PackageName VersionRange -> TimeSpec -> IO Env
-newEnv cfg is cons ts = atomically $ Env cfg is cons
+newEnv :: Config -> PlanParams -> TimeSpec -> IO Env
+newEnv cfg pp ts = atomically $ Env cfg pp
     <$> newTVar (cfgThreads cfg)
     <*> sequence (pure (newTVar Nothing))
     <*> newTVar ts
@@ -111,19 +111,18 @@ newEnv cfg is cons ts = atomically $ Env cfg is cons
     <*> newTVar (Stats 0 0 0)
 
 runM
-    :: Config                         -- ^ configuration
-    -> Maybe UTCTime                  -- ^ index state
-    -> Map PackageName VersionRange   -- ^ constraints
-    -> M a                            -- ^ action
+    :: Config      -- ^ configuration
+    -> PlanParams  -- ^ plan configuration
+    -> M a         -- ^ action
     -> IO a
-runM cfg is cons m = withLock $ displayConsoleRegions $ withConsoleRegion Linear $ \region -> do
+runM cfg pp m = withLock $ displayConsoleRegions $ withConsoleRegion Linear $ \region -> do
     -- Start times
     tz           <- getCurrentTimeZone
     startUtcTime <- getCurrentTime
     startTime    <- getTime Monotonic
 
     -- Environment
-    env <- newEnv cfg is cons startTime
+    env <- newEnv cfg pp startTime
 
     -- Stats region
     setConsoleRegion region $ do
@@ -266,6 +265,9 @@ runCabal mode dir ghcVersion constraints = do
     indexState <- askIndexState
     let indexStateArg = maybe [] (return . formatTime defaultTimeLocale "--index-state=%Y-%m-%dT%H:%M:%SZ") indexState
 
+    allowNewer <- askAllowNewer
+    let allowNewerArg = map ("--allow-newer=" ++) allowNewer
+
     (_jGHC, jCabal) <- jobs
     runWithGHC mode' dir ghcVersion "cabal" $
         [ "new-build"
@@ -274,7 +276,7 @@ runCabal mode dir ghcVersion constraints = do
         , testFlag, "--disable-benchmarks"
         , "-j" ++ show jCabal
         -- , "--ghc-options=" ++ ghcOptions
-        ] ++ modeArg ++ indexStateArg ++ constraintsArg ++
+        ] ++ modeArg ++ indexStateArg ++ allowNewerArg ++ constraintsArg ++ 
         [ "all"
         ]
   where
@@ -396,7 +398,10 @@ jobs = mkM $ \env -> pure (envGhcJobs env, envCabalJobs env)
 askConstraints :: Map PackageName VersionRange -> M (Map PackageName VersionRange)
 askConstraints c = mkM $ \env -> pure
     $ Map.unionWith intersectVersionRanges c
-    $ envConstraints env
+    $ ppConstraints $ envPlanParams env
 
 askIndexState :: M (Maybe UTCTime)
-askIndexState = mkM $ return . envIndexState
+askIndexState = mkM $ return . ppIndexState . envPlanParams
+
+askAllowNewer :: M [String]
+askAllowNewer = mkM $ return . ppAllowNewer . envPlanParams
