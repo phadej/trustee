@@ -94,7 +94,7 @@ matrixRow' test ghcs constraints dir = forConcurrently ghcs $ \ghcVersion -> run
     when (isFailure ec0) $ exit $ ResultDryFail ec0 o0 e0
 
     (ec1, o1, e1) <- lift $ runCabal ModeDep dir ghcVersion constraints
-    when (isFailure ec1) $ exit $ ResultDryFail ec1 o1 e1
+    when (isFailure ec1) $ exit $ ResultDepFail ec1 o1 e1
 
     (ec2, o2, e2) <- lift $ runCabal ModeBuild dir ghcVersion constraints
     when (isFailure ec2) $ exit $ ResultFail ec2 o2 e2
