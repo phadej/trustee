@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Trustee.Get where
 
 import Control.Monad        (when)
@@ -6,7 +7,9 @@ import Distribution.Package (PackageName)
 import Distribution.Text    (display)
 import Distribution.Version (VersionRange, withinRange)
 import System.Directory     (doesDirectoryExist)
+import System.FilePath      ((</>))
 
+import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import qualified System.Process  as Process
 
@@ -23,11 +26,16 @@ cmdGet pkgname vr = do
             then putStrLn $ dirname ++ " exists"
             else do
                 putStrLn $ "Fetching " ++ dirname
-                
+
                 _ <- flip Process.readCreateProcess "" $ Process.proc "cabal" ["get", dirname]
                 let indir p = p { Process.cwd = Just dirname }
+
+                -- add cabal.project
+                BS.writeFile (dirname </> "cabal.project") "packages: ."
+
+                -- git
                 _ <- flip Process.readCreateProcess "" $ indir $ Process.proc "git" ["init"]
                 _ <- flip Process.readCreateProcess "" $ indir $ Process.proc "git" ["add", "."]
                 _ <- flip Process.readCreateProcess "" $ indir $ Process.proc "git" ["commit", "-am", "trustee get"]
-  
+
                 pure ()
