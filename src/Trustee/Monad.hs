@@ -268,6 +268,9 @@ runCabal mode dir ghcVersion constraints = do
     allowNewer <- askAllowNewer
     let allowNewerArg = map ("--allow-newer=" ++) allowNewer
 
+    backjumps <- askBackjumps
+    let backjumpsArg = maybe [] (\b -> ["--max-backjumps=" ++ show b]) backjumps
+
     (_jGHC, jCabal) <- jobs
     runWithGHC mode' dir ghcVersion "cabal" $
         [ "new-build"
@@ -276,7 +279,7 @@ runCabal mode dir ghcVersion constraints = do
         , testFlag, "--disable-benchmarks"
         , "-j" ++ show jCabal
         -- , "--ghc-options=" ++ ghcOptions
-        ] ++ modeArg ++ indexStateArg ++ allowNewerArg ++ constraintsArg ++ 
+        ] ++ modeArg ++ indexStateArg ++ backjumpsArg ++ allowNewerArg ++ constraintsArg ++
         [ "."
         ]
   where
@@ -405,3 +408,6 @@ askIndexState = mkM $ return . ppIndexState . envPlanParams
 
 askAllowNewer :: M [String]
 askAllowNewer = mkM $ return . ppAllowNewer . envPlanParams
+
+askBackjumps :: M (Maybe Int)
+askBackjumps = mkM $ return . ppBackjumps . envPlanParams

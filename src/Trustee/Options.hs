@@ -31,6 +31,7 @@ data PlanParams = PlanParams
     { ppConstraints :: Map PackageName VersionRange -- TODO: support installed
     , ppAllowNewer  :: [String]                     -- TODO: proper type
     , ppIndexState  :: Maybe UTCTime
+    , ppBackjumps   :: Maybe Int
     }
   deriving Show
 
@@ -60,8 +61,9 @@ globalOpts = mkGlobalOpts
     <*> fmap mkConstraintMap (many constraints)
     <*> many allowNewer
     <*> optional indexState
+    <*> optional backjumps
   where
-    mkGlobalOpts x0 x1 x2 x3 = GlobalOpts x0 (PlanParams x1 x2 x3)
+    mkGlobalOpts x0 x1 x2 x3 x4 = GlobalOpts x0 (PlanParams x1 x2 x3 x4)
 
     option x ms = O.option x (mconcat ms)
 
@@ -93,6 +95,12 @@ globalOpts = mkGlobalOpts
       where
         iso   = parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
         stamp = parseTimeM True defaultTimeLocale "%s"
+
+    backjumps = option O.auto
+        [ O.long "max-backjumps"
+        , O.metavar ":count"
+        , O.help "Maximum number of backjumps allowed"
+        ]
 
 cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
