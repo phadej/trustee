@@ -277,7 +277,7 @@ runCabal mode dir ghcVersion constraints = do
         , "-j" ++ show jCabal
         -- , "--ghc-options=" ++ ghcOptions
         ] ++ modeArg ++ indexStateArg ++ allowNewerArg ++ constraintsArg ++ 
-        [ "all"
+        [ "."
         ]
   where
     test = case mode of
