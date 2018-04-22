@@ -1,14 +1,20 @@
-module Trustee.Index (Index, readIndex) where
+module Trustee.Index (
+    Index,
+    readIndex,
+    indexValueVersions,
+  ) where
 
-import Data.List                 (foldl')
-import Data.Time                 (UTCTime)
-import Data.Time.Clock.POSIX     (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Distribution.Compat.ReadP (char, munch1)
-import Distribution.Package      (PackageName)
-import Distribution.Text         (parse)
-import Distribution.Version      (Version)
-import System.Directory          (getAppUserDataDirectory)
-import System.FilePath           ((</>))
+import Control.Applicative             ((<|>))
+import Data.List                       (foldl')
+import Data.Time                       (UTCTime)
+import Data.Time.Clock.POSIX
+       (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
+import Distribution.Compat.CharParsing (char, munch1, string)
+import Distribution.Package            (PackageName)
+import Distribution.Parsec.Class       (explicitEitherParsec, parsec)
+import Distribution.Version            (Version, VersionRange, withinRange)
+import System.Directory                (getAppUserDataDirectory)
+import System.FilePath                 ((</>))
 
 import qualified Codec.Archive.Tar       as Tar
 import qualified Codec.Archive.Tar.Entry as Tar
@@ -16,9 +22,27 @@ import qualified Data.ByteString.Lazy    as LBS
 import qualified Data.Map.Strict         as Map
 import qualified Data.Set                as Set
 
-import Trustee.Util
+import Trustee.Options (IncludeDeprecated (..))
 
-type Index = Map.Map PackageName (Set.Set Version)
+type Index = Map.Map PackageName IndexValue
+
+data IndexValue = IV
+    { _ivVersions  :: !(Set.Set Version)
+    , _ivPreferred :: !(Maybe VersionRange)
+    }
+
+-- | First arg
+indexValueVersions :: IncludeDeprecated -> IndexValue -> Set.Set Version
+indexValueVersions IncludeDeprecated (IV vs _)         = vs
+indexValueVersions OmitDeprecated    (IV vs Nothing)   = vs
+indexValueVersions OmitDeprecated    (IV vs (Just vr)) = Set.filter (`withinRange` vr) vs
+
+singleVersion :: Version -> IndexValue
+singleVersion v = IV (Set.singleton v) Nothing
+
+-- | Union versions, last preferred
+instance Semigroup IndexValue where
+    IV v p <> IV v' p' = IV (Set.union v v') (p' <|> p)
 
 data Pair = Pair !Index !Tar.EpochTime
 
@@ -47,17 +71,25 @@ readIndex indexState = do
         | otherwise   = entriesToList es
 
     add :: Pair -> Tar.Entry -> Pair
-    add pair@(Pair m _) entry = case maybeReadP p $ Tar.fromTarPathToPosixPath $ Tar.entryTarPath entry of
-        Just (pkgName, version) -> Pair
-            (Map.insertWith Set.union pkgName (Set.singleton version) m)
+    add pair@(Pair m _) entry = case explicitEitherParsec p fp of
+        Right (Right (pkgName, version)) -> Pair
+            (Map.insertWith (<>) pkgName (singleVersion version) m)
             (Tar.entryTime entry)
+        Right (Left x) -> error (show x)
         _ -> pair
+      where
+        fp = Tar.fromTarPathToPosixPath $ Tar.entryTarPath entry
 
     p = do
-        pkgName <- parse
+        pkgName <- parsec
         _ <- char '/'
-        version <- parse
+        Right <$> versionP pkgName <|> Left <$> preferredP pkgName
+
+    versionP pkgName = do
+        version <- parsec
         _ <- char '/'
         _ <- munch1 (const True)
         return (pkgName, version)
+
+    preferredP pkgName = pkgName <$ string "preferred-versions"
 

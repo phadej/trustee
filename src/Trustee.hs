@@ -21,7 +21,7 @@ main = do
     case cmd of
         CmdBounds verify l -> runM cfg pp $ cmdBounds opts cwd verify l
         CmdNewBuild args   -> runM cfg pp $ cmdNewBuild opts cwd args
-        CmdGet pkgname vr  -> cmdGet pkgname vr
+        CmdGet pkgname vr  -> cmdGet opts pkgname vr
         CmdMatrix test dirs -> do
             dirs' <- traverse (Path.resolveDir cwd) dirs
             runM cfg pp $ cmdMatrix opts test dirs'

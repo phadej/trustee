@@ -1,28 +1,28 @@
 module Trustee.Bounds (cmdBounds) where
 
-import Control.Monad                         (unless, when)
-import Control.Monad.IO.Class                (liftIO)
-import Data.Function                         (on)
-import Data.List                             (intercalate)
-import Data.List.NonEmpty                    (NonEmpty (..))
-import Data.Maybe                            (listToMaybe)
+import Control.Monad                          (unless, when)
+import Control.Monad.IO.Class                 (liftIO)
+import Data.Function                          (on)
+import Data.List                              (intercalate)
+import Data.List.NonEmpty                     (NonEmpty (..))
+import Data.Maybe                             (listToMaybe)
 import Data.Semigroup
        (Max (..), Min (..), Option (..), Semigroup (..), option)
-import Distribution.Compiler                 (CompilerFlavor (..))
-import Distribution.Package                  (PackageName)
-import Distribution.PackageDescription       (GenericPackageDescription (..))
-import Distribution.PackageDescription.Parse (readGenericPackageDescription)
-import Distribution.System                   (OS (..))
-import Distribution.Text                     (display)
-import Distribution.Types.CondTree           (simplifyCondTree)
-import Distribution.Types.Dependency         (Dependency (..))
+import Distribution.Compiler                  (CompilerFlavor (..))
+import Distribution.Package                   (PackageName)
+import Distribution.PackageDescription        (GenericPackageDescription (..))
+import Distribution.PackageDescription.Parsec (readGenericPackageDescription)
+import Distribution.System                    (OS (..))
+import Distribution.Text                      (display)
+import Distribution.Types.CondTree            (simplifyCondTree)
+import Distribution.Types.Dependency          (Dependency (..))
 import Distribution.Version
        (Version, VersionRange, intersectVersionRanges, mkVersion,
        orEarlierVersion, orLaterVersion, simplifyVersionRange, thisVersion,
        versionNumbers, withinRange)
-import Path                                  (Abs, Dir, Path)
-import System.Exit                           (ExitCode (..))
-import System.FilePath.Glob                  (compile, globDir1)
+import Path                                   (Abs, Dir, Path)
+import System.Exit                            (ExitCode (..))
+import System.FilePath.Glob                   (compile, globDir1)
 
 import qualified Data.List.NonEmpty              as NE
 import qualified Data.Map.Strict                 as Map
@@ -88,7 +88,8 @@ cmdBoundsSweep opts dir verify = do
     xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
     case xs of
         [cabalFile] -> do
-            index <- liftIO $ fst <$> readIndex (goIndexState opts)
+            index' <- liftIO $ fst <$> readIndex (goIndexState opts)
+            let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
             gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
             cols <- fmap Map.unions $ forConcurrently ghcs $ \ghcVersion -> do
                 cells <- sweepForGhc verify dir index gpd ghcVersion
@@ -101,7 +102,7 @@ cmdBoundsSweep opts dir verify = do
 sweepForGhc
     :: Bool
     -> Path Abs Dir
-    -> Index
+    -> Map.Map PackageName (Set.Set Version)
     -> GenericPackageDescription
     -> GHCVer
     -> M (Map.Map PackageName SweepResult)
@@ -158,7 +159,8 @@ cmdBoundsLimit opts dir verify limit = do
 
     case xs of
         [cabalFile] -> do
-            index <- liftIO $ fst <$> readIndex (goIndexState opts)
+            index' <- liftIO $ fst <$> readIndex (goIndexState opts)
+            let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
             gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
             cols <- fmap Map.unions $ forConcurrently ghcs $ \ghcVersion -> do
                 cells <- boundsForGhc verify limit dir index gpd ghcVersion
@@ -187,7 +189,7 @@ boundsForGhc
     :: Bool
     -> Limit
     -> Path Abs Dir
-    -> Index
+    -> Map.Map PackageName (Set.Set Version)
     -> GenericPackageDescription
     -> GHCVer
     -> M (Map.Map PackageName Result)

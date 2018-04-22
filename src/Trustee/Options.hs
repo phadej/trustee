@@ -1,6 +1,7 @@
 module Trustee.Options (
     Cmd (..),
     GlobalOpts (..),
+    IncludeDeprecated (..),
     goIndexState,
     PlanParams (..),
     Limit (..),
@@ -18,9 +19,13 @@ import Distribution.Version          (VersionRange, anyVersion)
 import qualified Data.Map            as Map
 import qualified Options.Applicative as O
 
+data IncludeDeprecated = IncludeDeprecated | OmitDeprecated
+  deriving Show
+
 data GlobalOpts = GlobalOpts
-    { goGhcVersions :: VersionRange
-    , goPlanParams  :: PlanParams
+    { goGhcVersions       :: VersionRange
+    , goPlanParams        :: PlanParams
+    , goIncludeDeprecated :: IncludeDeprecated
     }
   deriving Show
 
@@ -62,6 +67,7 @@ globalOpts = mkGlobalOpts
     <*> many allowNewer
     <*> optional indexState
     <*> optional backjumps
+    <*> includeDeprecated
   where
     mkGlobalOpts x0 x1 x2 x3 x4 = GlobalOpts x0 (PlanParams x1 x2 x3 x4)
 
@@ -101,6 +107,18 @@ globalOpts = mkGlobalOpts
         , O.metavar ":count"
         , O.help "Maximum number of backjumps allowed"
         ]
+
+    includeDeprecated = a <|> b <|> pure IncludeDeprecated where
+        a = O.flag' IncludeDeprecated $ mconcat
+            [ O.long "include-deprecated"
+            , O.help "Include deprecated packages (default)"
+            ]
+
+        b = O.flag' OmitDeprecated $ mconcat
+            [ O.long "omit-deprecated"
+            , O.help "Omit deprecated packages"
+            ]
+
 
 cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
