@@ -10,8 +10,10 @@ import Data.Time                       (UTCTime)
 import Data.Time.Clock.POSIX
        (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Distribution.Compat.CharParsing (char, munch1, string)
+import Distribution.Parsec.FieldLineStream (fieldLineStreamFromBS)
 import Distribution.Package            (PackageName)
-import Distribution.Parsec.Class       (explicitEitherParsec, parsec)
+import Distribution.Types.Dependency (Dependency (..))
+import Distribution.Parsec.Class       (explicitEitherParsec, parsec, runParsecParser)
 import Distribution.Version            (Version, VersionRange, withinRange)
 import System.Directory                (getAppUserDataDirectory)
 import System.FilePath                 ((</>))
@@ -39,6 +41,9 @@ indexValueVersions OmitDeprecated    (IV vs (Just vr)) = Set.filter (`withinRang
 
 singleVersion :: Version -> IndexValue
 singleVersion v = IV (Set.singleton v) Nothing
+
+preferred :: VersionRange -> IndexValue
+preferred vr = IV Set.empty (Just vr)
 
 -- | Union versions, last preferred
 instance Semigroup IndexValue where
@@ -75,7 +80,13 @@ readIndex indexState = do
         Right (Right (pkgName, version)) -> Pair
             (Map.insertWith (<>) pkgName (singleVersion version) m)
             (Tar.entryTime entry)
-        Right (Left x) -> error (show x)
+        Right (Left _) -> case Tar.entryContent entry of
+            Tar.NormalFile lbs _ -> case runParsecParser parsec fp (fieldLineStreamFromBS $ LBS.toStrict lbs) of
+                Left _    -> pair
+                Right (Dependency pkgName vr) -> Pair
+                    (Map.insertWith (<>) pkgName (preferred vr) m)
+                    (Tar.entryTime entry)
+            _ -> pair
         _ -> pair
       where
         fp = Tar.fromTarPathToPosixPath $ Tar.entryTarPath entry
