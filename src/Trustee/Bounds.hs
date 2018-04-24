@@ -1,5 +1,8 @@
 module Trustee.Bounds (cmdBounds) where
 
+import Algebra.Lattice
+       (BoundedMeetSemiLattice (top), JoinSemiLattice ((\/)), Lattice,
+       MeetSemiLattice ((/\)), meets)
 import Control.Monad                          (unless, when)
 import Control.Monad.IO.Class                 (liftIO)
 import Data.Function                          (on)
@@ -12,14 +15,16 @@ import Distribution.Compiler                  (CompilerFlavor (..))
 import Distribution.Package                   (PackageName)
 import Distribution.PackageDescription        (GenericPackageDescription (..))
 import Distribution.PackageDescription.Parsec (readGenericPackageDescription)
+import Distribution.Pretty                    (prettyShow)
 import Distribution.System                    (OS (..))
-import Distribution.Text                      (display)
-import Distribution.Types.CondTree            (simplifyCondTree)
+import Distribution.Types.Condition           (simplifyCondition)
+import Distribution.Types.CondTree
+       (CondBranch (..), CondTree (..), mapTreeConstrs)
 import Distribution.Types.Dependency          (Dependency (..))
 import Distribution.Version
        (Version, VersionRange, intersectVersionRanges, mkVersion,
        orEarlierVersion, orLaterVersion, simplifyVersionRange, thisVersion,
-       versionNumbers, withinRange)
+       unionVersionRanges, versionNumbers, withinRange)
 import Path                                   (Abs, Dir, Path)
 import System.Exit                            (ExitCode (..))
 import System.FilePath.Glob                   (compile, globDir1)
@@ -77,9 +82,9 @@ makeSweepCell r = case r of
   where
     displayVs vs
       | length vs > 3 =
-            display (minimum vs) ++ " .. " ++ display (maximum vs)
+            prettyShow (minimum vs) ++ " .. " ++ prettyShow (maximum vs)
             ++ " (" ++ show (length vs) ++ ")"
-      | otherwise = intercalate ", " $ map display $ NE.toList vs
+      | otherwise = intercalate ", " $ map prettyShow $ NE.toList vs
 
 
 cmdBoundsSweep :: GlobalOpts -> Path Abs Dir -> Bool -> M ()
@@ -110,10 +115,15 @@ sweepForGhc verify dir index gpd ghcVersion = do
     let deps = allBuildDepends (toVersion ghcVersion) gpd
     let deps' = Map.intersectionWith withinRange' index deps
 
+    -- putStrs $ map (uncurry formatDep) $ Map.toList deps'
+
     fmap Map.fromList $ forConcurrently (Map.toList deps') $ \(pkgName, vs) ->
         fmap ((,) pkgName) $ sweep pkgName vs
   where
     withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
+
+    -- formatDep :: PackageName -> [Version] -> String
+    -- formatDep pn vs = prettyShow pn <> " : " <> intercalate ", " (map prettyShow vs)
 
     sweep :: PackageName -> [Version] -> M SweepResult
     sweep pkgName vs = mconcat <$> forConcurrently majorVs (resultRange pkgName)
@@ -179,11 +189,11 @@ data Result
   deriving Show
 
 makeCell ::  Result -> Txt
-makeCell (ResultOk v)      = mkTxt Green   $ display v
-makeCell (ResultAlmost v)  = mkTxt Cyan    $ display v
+makeCell (ResultOk v)      = mkTxt Green   $ prettyShow v
+makeCell (ResultAlmost v)  = mkTxt Cyan    $ prettyShow v
 makeCell ResultNoPlan      = mkTxt Blue    "no-plan"
-makeCell (ResultDepFail v) = mkTxt Magenta $ display v
-makeCell (ResultFail v)    = mkTxt Red     $ display v
+makeCell (ResultDepFail v) = mkTxt Magenta $ prettyShow v
+makeCell (ResultFail v)    = mkTxt Red     $ prettyShow v
 
 boundsForGhc
     :: Bool
@@ -278,19 +288,54 @@ allBuildDepends ghcVersion
     libBD :: PD.CondTree PD.ConfVar [Dependency] PD.Library
           -> Map.Map PackageName VersionRange
     libBD
-        = Map.fromListWith intersectVersionRanges
-        . map dependencyToPair
-        . fst
-        . simplifyCondTree (Right . evalConfVar)
+        = unDepMap
+        . simplifyCondTree' evalConfVar
+        . mapTreeConstrs toDepMap
 
+
+    evalConfVar :: PD.ConfVar -> Either PD.ConfVar Bool
+    evalConfVar (PD.OS Linux)    = Right True
+    evalConfVar (PD.OS _)        = Right False
+    evalConfVar (PD.Impl GHC vr) = Right $ ghcVersion `withinRange` vr
+    evalConfVar (PD.Impl _ _)    = Right False
+    evalConfVar c                = Left c
+
+newtype DepMap = DepMap { unDepMap :: Map.Map PackageName VersionRange }
+
+instance Lattice DepMap
+
+instance JoinSemiLattice DepMap where
+    DepMap x \/ DepMap y = DepMap (Map.intersectionWith unionVersionRanges x y)
+
+instance MeetSemiLattice DepMap where
+    DepMap x /\ DepMap y = DepMap (Map.unionWith intersectVersionRanges x y)
+
+instance BoundedMeetSemiLattice DepMap where
+    top = DepMap Map.empty
+
+toDepMap :: [Dependency] -> DepMap
+toDepMap =
+    DepMap . Map.fromListWith intersectVersionRanges . map dependencyToPair
+  where
     dependencyToPair (Dependency p vr) = (p, vr)
 
-    evalConfVar :: PD.ConfVar -> Bool
-    evalConfVar (PD.OS Linux)    = True
-    evalConfVar (PD.OS _)        = False
-    evalConfVar (PD.Impl GHC vr) = ghcVersion `withinRange` vr
-    evalConfVar (PD.Impl _ _)    = False
-    evalConfVar _                = True
+-- | Like 'simplifyCondTree', but when a condition cannot be evaluated, both branches are included.
+simplifyCondTree'
+    :: (Lattice d, BoundedMeetSemiLattice d)
+    => (v -> Either v Bool)
+    -> PD.CondTree v d a
+    -> d
+simplifyCondTree' env (CondNode _a d ifs) =
+    d /\ meets (map simplifyIf ifs)
+  where
+    simplifyIf (CondBranch cnd t me) =
+        case simplifyCondition cnd env of
+              (PD.Lit True, _)  -> t'
+              (PD.Lit False, _) -> e'
+              (_, _)            -> t' \/  e'
+      where
+        t' = simplifyCondTree' env t
+        e' = maybe top (simplifyCondTree' env) me
 
 extractMajorVersion :: Version -> Version
 extractMajorVersion v = case versionNumbers v of
@@ -315,12 +360,12 @@ maximum2
 
 makeTable :: (a -> Txt) -> [GHCVer] -> Map.Map (GHCVer, PackageName) a -> [[Txt]]
 makeTable mkCell ghcs m
-    = (emptyTxt : map (mkTxt Black . display. toVersion) ghcs)
+    = (emptyTxt : map (mkTxt Black . prettyShow. toVersion) ghcs)
     : map mkRow pkgNames
   where
     pkgNames = Set.toList $ Set.map snd $ Map.keysSet m
 
     mkRow :: PackageName -> [Txt]
     mkRow pkgName
-        = mkTxt Black (display pkgName)
+        = mkTxt Black (prettyShow pkgName)
         : map (\g -> maybe emptyTxt mkCell $ Map.lookup (g, pkgName) m) ghcs
