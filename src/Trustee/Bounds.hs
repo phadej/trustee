@@ -305,10 +305,11 @@ newtype DepMap = DepMap { unDepMap :: Map.Map PackageName VersionRange }
 instance Lattice DepMap
 
 instance JoinSemiLattice DepMap where
-    DepMap x \/ DepMap y = DepMap (Map.intersectionWith unionVersionRanges x y)
+    -- here we want to union dependency ranges
+    DepMap x \/ DepMap y = DepMap (Map.unionWith unionVersionRanges x y)
 
 instance MeetSemiLattice DepMap where
-    DepMap x /\ DepMap y = DepMap (Map.unionWith intersectVersionRanges x y)
+    DepMap x /\ DepMap y = DepMap (Map.unionWith unionVersionRanges x y)
 
 instance BoundedMeetSemiLattice DepMap where
     top = DepMap Map.empty
