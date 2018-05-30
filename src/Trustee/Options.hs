@@ -1,27 +1,50 @@
 module Trustee.Options (
     Cmd (..),
     GlobalOpts (..),
+    IncludeDeprecated (..),
+    goIndexState,
+    PlanParams (..),
     Limit (..),
     parseOpts,
     ) where
 
-import Control.Applicative  ((<**>), (<|>), many)
-import Distribution.Text    (simpleParse)
-import Distribution.Package (PackageName)
-import Distribution.Version (VersionRange, anyVersion)
+import Control.Applicative           (many, optional, (<**>), (<|>))
+import Data.Map                      (Map)
+import Data.Time                     (UTCTime, defaultTimeLocale, parseTimeM)
+import Distribution.Package          (PackageName)
+import Distribution.Text             (simpleParse)
+import Distribution.Types.Dependency (Dependency (..))
+import Distribution.Version          (VersionRange, anyVersion)
 
+import qualified Data.Map            as Map
 import qualified Options.Applicative as O
 
-newtype GlobalOpts = GlobalOpts
-    { goGhcVersions :: VersionRange
+data IncludeDeprecated = IncludeDeprecated | OmitDeprecated
+  deriving Show
+
+data GlobalOpts = GlobalOpts
+    { goGhcVersions       :: VersionRange
+    , goPlanParams        :: PlanParams
+    , goIncludeDeprecated :: IncludeDeprecated
+    }
+  deriving Show
+
+goIndexState :: GlobalOpts -> Maybe UTCTime
+goIndexState = ppIndexState . goPlanParams
+
+data PlanParams = PlanParams
+    { ppConstraints :: Map PackageName VersionRange -- TODO: support installed
+    , ppAllowNewer  :: [String]                     -- TODO: proper type
+    , ppIndexState  :: Maybe UTCTime
+    , ppBackjumps   :: Maybe Int
     }
   deriving Show
 
 data Cmd
     = CmdNewBuild [String]
-    | CmdMatrix [FilePath] [String]
+    | CmdMatrix Bool [FilePath]
     | CmdGet PackageName VersionRange
-    | CmdBounds Bool Limit
+    | CmdBounds Bool (Maybe Limit)
   deriving Show
 
 data Limit = LimitUpper | LimitLower
@@ -38,9 +61,16 @@ parseOpts = O.execParser $ O.info ((,) <$> globalOpts <*> cmd <**> O.helper) $ m
     ]
 
 globalOpts :: O.Parser GlobalOpts
-globalOpts = GlobalOpts
+globalOpts = mkGlobalOpts
     <$> ghcs
+    <*> fmap mkConstraintMap (many constraints)
+    <*> many allowNewer
+    <*> optional indexState
+    <*> optional backjumps
+    <*> includeDeprecated
   where
+    mkGlobalOpts x0 x1 x2 x3 x4 = GlobalOpts x0 (PlanParams x1 x2 x3 x4)
+
     option x ms = O.option x (mconcat ms)
 
     ghcs = option (O.maybeReader simpleParse)
@@ -49,6 +79,46 @@ globalOpts = GlobalOpts
         , O.metavar ":version-range"
         , O.help "GHC versions to build with"
         ] <|> pure anyVersion
+
+    constraints = option (O.maybeReader simpleParse)
+        [ O.short 'c'
+        , O.long "constraint"
+        , O.metavar ":constraint"
+        , O.help "Additional constraints"
+        ]
+
+    allowNewer = O.strOption $ mconcat
+        [ O.long "allow-newer"
+        , O.metavar "pkg:dep"
+        , O.help "Allow newer versions of packags"
+        ]
+
+    indexState = option (O.maybeReader $ \s -> iso s <|> stamp s)
+        [ O.long "index-state"
+        , O.metavar ":timestamp"
+        , O.help "Index state"
+        ]
+      where
+        iso   = parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
+        stamp = parseTimeM True defaultTimeLocale "%s"
+
+    backjumps = option O.auto
+        [ O.long "max-backjumps"
+        , O.metavar ":count"
+        , O.help "Maximum number of backjumps allowed"
+        ]
+
+    includeDeprecated = a <|> b <|> pure IncludeDeprecated where
+        a = O.flag' IncludeDeprecated $ mconcat
+            [ O.long "include-deprecated"
+            , O.help "Include deprecated packages (default)"
+            ]
+
+        b = O.flag' OmitDeprecated $ mconcat
+            [ O.long "omit-deprecated"
+            , O.help "Omit deprecated packages"
+            ]
+
 
 cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
@@ -60,47 +130,59 @@ cmd = O.subparser $ mconcat
 
 cmdBounds :: O.Parser Cmd
 cmdBounds = CmdBounds
-    <$> O.switch (mconcat
+    <$> switch
         [ O.help "verify plans"
         , O.long "verify"
-        ])
+        ]
     <*> limit
+    <**> O.helper
   where
-    limit = lower <|> upper
+    limit = lower <|> upper <|> sweep
 
-    lower = O.flag' LimitLower $ mconcat
+    lower = O.flag' (Just LimitLower) $ mconcat
         [ O.long "lower"
         , O.help "Lower bounds"
         ]
 
-    upper = O.flag' LimitUpper $ mconcat
+    upper = O.flag' (Just LimitUpper) $ mconcat
         [ O.long "upper"
         , O.help "Upper bounds"
         ]
-        
+
+    sweep = O.flag' Nothing $ mconcat
+        [ O.long "sweep"
+        , O.help "Sweep bounds (expensive)"
+        ]
 
 cmdNewBuild :: O.Parser Cmd
-cmdNewBuild = CmdNewBuild <$> many (O.strArgument $ mconcat
-    [ O.metavar "arg"
-    , O.help "arguments to cabal new-build"
-    ])
+cmdNewBuild = CmdNewBuild
+    <$> many (O.strArgument $ mconcat
+        [ O.metavar "arg"
+        , O.help "arguments to cabal new-build"
+        ])
+    <**> O.helper
 
 cmdMatrix :: O.Parser Cmd
-cmdMatrix = CmdMatrix <$> many pkgs <*> many constraints where
+cmdMatrix = CmdMatrix
+    <$> switch
+        [ O.help "Run tests also"
+        , O.long "test"
+        ]
+    <*> many pkgs
+    <**> O.helper
+  where
     pkgs = O.strArgument $ mconcat
         [ O.metavar "pkg-dir"
         , O.help "package directories to include in matrix"
         ]
 
-    constraints = O.strOption $ mconcat
-        [ O.short 'c'
-        , O.long "constraint"
-        , O.metavar ":constraint"
-        , O.help "Additional constraints"
-        ]
 
 cmdGet :: O.Parser Cmd
-cmdGet = CmdGet <$> name <*> (version <|> pure anyVersion) where
+cmdGet = CmdGet
+    <$> name
+    <*> (version <|> pure anyVersion)
+    <**> O.helper
+  where
     name = O.argument (O.maybeReader simpleParse) $ mconcat
         [ O.metavar ":pkgname"
         , O.help "Package name"
@@ -110,3 +192,10 @@ cmdGet = CmdGet <$> name <*> (version <|> pure anyVersion) where
         [ O.metavar ":versions"
         , O.help "Version range"
         ]
+
+switch :: [O.Mod O.FlagFields Bool] -> O.Parser Bool
+switch = O.switch . mconcat
+
+mkConstraintMap :: [Dependency] -> Map PackageName VersionRange
+mkConstraintMap = Map.fromList . map toPair where
+    toPair (Dependency pname vr) = (pname, vr)
