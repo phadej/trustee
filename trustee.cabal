@@ -16,7 +16,7 @@ author:              Oleg Grenrus <oleg.grenrus@iki.fi>
 maintainer:          Oleg Grenrus <oleg.grenrus@iki.fi>
 copyright:           (c) 2018 Oleg Grenrus
 build-type:          Simple
-tested-with:         GHC==8.4.2
+tested-with:         GHC==8.4.4
 
 library
   exposed-modules:
