@@ -244,8 +244,8 @@ toMode' ModeBuild     = ModeBld'
 toMode' ModeBuildTest = ModeBld'
 
 findPlan :: Path Abs Dir -> GHCVer -> Map PackageName VersionRange -> M Cabal.PlanJson
-findPlan dir ghcVersion constraints = liftIO $ fmap fst $
-    Cabal.findAndDecodePlanJson (Just dir')
+findPlan dir ghcVersion constraints = liftIO $
+    Cabal.findAndDecodePlanJson (Cabal.InBuildDir dir')
   where
     dir' = Path.toFilePath dir </> (".dist-newstyle-" ++ buildDirSuffix)
     constraintsS = fmap simplifyVersionRange constraints
