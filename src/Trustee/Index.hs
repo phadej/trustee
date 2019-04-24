@@ -58,7 +58,7 @@ readIndex :: Maybe UTCTime -> IO (Index, UTCTime)
 readIndex indexState = do
     c <- getAppUserDataDirectory "cabal"
     -- TODO: we could read ~/.cabal/config
-    let indexTar = c </> "packages/hackage.haskell.org/01-index.tar"
+    let indexTar = "/cabal" </> "packages/hackage.haskell.org/01-index.tar"
     contents <- LBS.readFile indexTar
     return $ toLazy $ foldl' add start $ entriesToList $ Tar.read contents
   where
