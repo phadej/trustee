@@ -144,7 +144,7 @@ matrixRow ghcs args dir = do
         (ec0, o0, e0) <- lift $ runWithGHC ModeDry' dir ghcVersion "cabal" $
             [ "new-build"
             , "-w", "ghc-" ++ display (toVersion ghcVersion)
-            , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion)
+            , "--builddir=.dist-newstyle-trustee/" ++ display (toVersion ghcVersion)
             -- , "--ghc-options=" ++ ghcOptions jGHC ghcVersion
             , "-j" ++ show jCabal
             , "--dry-run"
@@ -155,7 +155,7 @@ matrixRow ghcs args dir = do
         (ec1, o1, e1) <- lift $ runWithGHC ModeDep' dir ghcVersion "cabal" $
             [ "new-build"
             , "-w", "ghc-" ++ display (toVersion ghcVersion)
-            , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion)
+            , "--builddir=.dist-newstyle-trustee/" ++ display (toVersion ghcVersion)
             -- , "--ghc-options=" ++ ghcOptions jGHC ghcVersion
             , "--dependencies"
             , "-j" ++ show jCabal
@@ -166,7 +166,7 @@ matrixRow ghcs args dir = do
         (ec2, o2, e2) <- lift $ runWithGHC ModeBld' dir ghcVersion "cabal" $
             [ "new-build"
             , "-w", "ghc-" ++ display (toVersion ghcVersion)
-            , "--builddir=.dist-newstyle-" ++ display (toVersion ghcVersion)
+            , "--builddir=.dist-newstyle-trustee/" ++ display (toVersion ghcVersion)
             -- , "--ghc-options=" ++ ghcOptions jGHC ghcVersion
             , "-j" ++ show jCabal
             ] ++ args

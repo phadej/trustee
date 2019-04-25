@@ -247,7 +247,7 @@ findPlan :: Path Abs Dir -> GHCVer -> Map PackageName VersionRange -> M Cabal.Pl
 findPlan dir ghcVersion constraints = liftIO $
     Cabal.findAndDecodePlanJson (Cabal.InBuildDir dir')
   where
-    dir' = Path.toFilePath dir </> (".dist-newstyle-" ++ buildDirSuffix)
+    dir' = Path.toFilePath dir </> (".dist-newstyle-trustee/" ++ buildDirSuffix)
     constraintsS = fmap simplifyVersionRange constraints
     buildDirSuffix
         = T.unpack
@@ -274,7 +274,7 @@ runCabal mode dir ghcVersion constraints = do
     (_jGHC, jCabal) <- jobs
     runWithGHC mode' dir ghcVersion "cabal" $
         [ "new-build"
-        , "--builddir=.dist-newstyle-" ++ buildDirSuffix constraintsS
+        , "--builddir=.dist-newstyle-trustee/" ++ buildDirSuffix constraintsS
         , "-w", "ghc-" ++ ghcVersion'
         , testFlag, "--disable-benchmarks"
         , "-j" ++ show jCabal
