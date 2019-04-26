@@ -6,7 +6,9 @@ module Trustee.GHC where
 
 import Data.Binary          (Binary)
 import Distribution.Version (Version, VersionRange, mkVersion, withinRange)
-import GHC.Generics         (Generic)
+import GHC.Generics         (Generic, Generic1)
+
+import Data.Vec.DataFamily.SpineStrict.Pigeonhole (gtabulate, gindex)
 
 data GHCVer
     = GHC_7_0
@@ -19,6 +21,7 @@ data GHCVer
     | GHC_8_2
     | GHC_8_4
     | GHC_8_6
+    | GHC_8_8
   deriving (Eq, Ord, Show, Read, Enum, Bounded, Generic)
 
 instance Binary GHCVer
@@ -40,34 +43,16 @@ toVersion GHC_8_0  = mkVersion [8,0,2]
 toVersion GHC_8_2  = mkVersion [8,2,2]
 toVersion GHC_8_4  = mkVersion [8,4,4]
 toVersion GHC_8_6  = mkVersion [8,6,5]
+toVersion GHC_8_8  = mkVersion [8,8,1]
 
-data PerGHC a = PerGHC a a a a a a a a a a
-  deriving (Functor, Foldable, Traversable)
+data PerGHC a = PerGHC a a a a a a a a a a a
+  deriving (Functor, Foldable, Traversable, Generic, Generic1)
 
 index :: PerGHC a -> GHCVer -> a
-index (PerGHC x _ _ _ _ _ _ _ _ _) GHC_7_0 = x
-index (PerGHC _ x _ _ _ _ _ _ _ _) GHC_7_2 = x
-index (PerGHC _ _ x _ _ _ _ _ _ _) GHC_7_4 = x
-index (PerGHC _ _ _ x _ _ _ _ _ _) GHC_7_6 = x
-index (PerGHC _ _ _ _ x _ _ _ _ _) GHC_7_8 = x
-index (PerGHC _ _ _ _ _ x _ _ _ _) GHC_7_10 = x
-index (PerGHC _ _ _ _ _ _ x _ _ _) GHC_8_0 = x
-index (PerGHC _ _ _ _ _ _ _ x _ _) GHC_8_2 = x
-index (PerGHC _ _ _ _ _ _ _ _ x _) GHC_8_4 = x
-index (PerGHC _ _ _ _ _ _ _ _ _ x) GHC_8_6 = x
+index = gindex
 
 tabulate :: (GHCVer -> a) -> PerGHC a
-tabulate f = PerGHC
-    (f GHC_7_0)
-    (f GHC_7_2)
-    (f GHC_7_4)
-    (f GHC_7_6)
-    (f GHC_7_8)
-    (f GHC_7_10)
-    (f GHC_8_0)
-    (f GHC_8_2)
-    (f GHC_8_4)
-    (f GHC_8_6)
+tabulate = gtabulate
 
 instance Applicative PerGHC where
     pure = tabulate . const

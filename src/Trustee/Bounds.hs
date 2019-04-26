@@ -1,8 +1,8 @@
 module Trustee.Bounds (cmdBounds) where
 
 import Algebra.Lattice
-       (BoundedMeetSemiLattice (top), JoinSemiLattice ((\/)), Lattice,
-       MeetSemiLattice ((/\)), meets)
+       (BoundedMeetSemiLattice (top), Lattice (..),
+       meets)
 import Control.Monad                          (unless, when)
 import Control.Monad.IO.Class                 (liftIO)
 import Data.Function                          (on)
@@ -302,13 +302,9 @@ allBuildDepends ghcVersion
 
 newtype DepMap = DepMap { unDepMap :: Map.Map PackageName VersionRange }
 
-instance Lattice DepMap
-
-instance JoinSemiLattice DepMap where
+instance Lattice DepMap where
     -- here we want to union dependency ranges
     DepMap x \/ DepMap y = DepMap (Map.unionWith unionVersionRanges x y)
-
-instance MeetSemiLattice DepMap where
     DepMap x /\ DepMap y = DepMap (Map.unionWith unionVersionRanges x y)
 
 instance BoundedMeetSemiLattice DepMap where

@@ -4,7 +4,7 @@ build :
 	cabal new-build -w ghc-8.4.4
 
 install : build
-	cp `cabal-plan list-bin trustee` ~/.local/bin
+	cp `cabal-plan list-bin trustee` /cabal/bin/trustee
 
 install-tools :
 	rm -rf ${HOME}/.local/bin/cabal-plan
