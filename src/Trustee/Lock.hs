@@ -1,7 +1,9 @@
+{-# LANGUAGE BangPatterns #-}
 module Trustee.Lock (withLock) where
 
 import Control.Concurrent        (threadDelay)
 import Control.Exception         (bracket, handle)
+import Control.Monad             (when)
 import Data.Foldable             (for_)
 import Data.Function             ((&))
 import GHC.IO.Handle.Lock        (LockMode (ExclusiveLock), hTryLock)
@@ -35,12 +37,15 @@ withLock action = do
     let pidFile  = cacheDir </> "pid"
     let open = openFile lockFile ReadWriteMode
     displayConsoleRegions $ withConsoleRegion Linear $ \region ->
-        bracket open hClose (loop region lockFile pidFile)
+        bracket open hClose (loop (0 :: Integer) region lockFile pidFile)
   where
     doNothing :: IOError -> IO ()
     doNothing _ = return ()
 
-    loop region lockFile pidFile h = do
+    divides :: Integral a => a -> a -> Bool
+    divides d x = x `mod` d == 0
+
+    loop !n region lockFile pidFile h = do
         l <- hTryLock h ExclusiveLock
         if l
         then do
@@ -50,7 +55,11 @@ withLock action = do
             closeConsoleRegion region
             action
         else do
-            outputConcurrent "other trustee process running\n"
+            when (n < 10 || n < 300 && 10 `divides` n || 300 `divides` n) $ outputConcurrent $
+                if n < 300
+                then "other trustee process running, waited " ++ show n ++ " secs\n"
+                else "other trustee process running, waited " ++ show (n `div` 60) ++ " mins\n"
+
             handle doNothing $ do
                 mpid <- readMaybe <$> readFile pidFile
                 for_ mpid $ \pid -> do
@@ -58,5 +67,5 @@ withLock action = do
                     setConsoleRegion region $ "FOO " ++ out
 
             -- wait 5 seconds, and try again
-            threadDelay $ 5 * 1000 * 1000
-            loop region lockFile pidFile h
+            threadDelay $ 1 * 1000 * 1000
+            loop (succ n) region lockFile pidFile h
