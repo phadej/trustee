@@ -115,7 +115,7 @@ runM
     -> PlanParams  -- ^ plan configuration
     -> M a         -- ^ action
     -> IO a
-runM cfg pp m = withLock $ displayConsoleRegions $ withConsoleRegion Linear $ \region -> do
+runM cfg pp m = withLock $ withConsoleRegion Linear $ \region -> do
     -- Start times
     tz           <- getCurrentTimeZone
     startUtcTime <- getCurrentTime

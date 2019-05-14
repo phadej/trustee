@@ -7,7 +7,7 @@ import Data.Function             ((&))
 import GHC.IO.Handle.Lock        (LockMode (ExclusiveLock), hTryLock)
 import System.Console.Concurrent (outputConcurrent)
 import System.Console.Regions
-       (RegionLayout (Linear), closeConsoleRegion, setConsoleRegion,
+       (RegionLayout (Linear), closeConsoleRegion, setConsoleRegion, displayConsoleRegions,
        withConsoleRegion)
 import System.Directory
        (XdgDirectory (..), createDirectoryIfMissing, emptyPermissions,
@@ -34,7 +34,7 @@ withLock action = do
     let lockFile = cacheDir </> "lock"
     let pidFile  = cacheDir </> "pid"
     let open = openFile lockFile ReadWriteMode
-    withConsoleRegion Linear $ \region ->
+    displayConsoleRegions $ withConsoleRegion Linear $ \region ->
         bracket open hClose (loop region lockFile pidFile)
   where
     doNothing :: IOError -> IO ()
@@ -50,12 +50,12 @@ withLock action = do
             closeConsoleRegion region
             action
         else do
-            outputConcurrent "other trustee process running"
+            outputConcurrent "other trustee process running\n"
             handle doNothing $ do
                 mpid <- readMaybe <$> readFile pidFile
                 for_ mpid $ \pid -> do
                     (_, out, _) <- readProcessWithExitCode "ps" ["-f", "--cumulative", show (pid :: Int)] ""
-                    setConsoleRegion region out
+                    setConsoleRegion region $ "FOO " ++ out
 
             -- wait 5 seconds, and try again
             threadDelay $ 5 * 1000 * 1000
