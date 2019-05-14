@@ -279,10 +279,14 @@ runCabal mode dir ghcVersion constraints = do
         , testFlag, "--disable-benchmarks"
         , "-j" ++ show jCabal
         -- , "--ghc-options=" ++ ghcOptions
-        ] ++ modeArg ++ indexStateArg ++ backjumpsArg ++ allowNewerArg ++ constraintsArg ++
+        ] ++ optArg ++ modeArg ++ indexStateArg ++ backjumpsArg ++ allowNewerArg ++ constraintsArg ++
         [ "."
         ]
   where
+    optArg = case mode of
+        ModeBuild -> ["-O0"]
+        _         -> []
+
     test = case mode of
         ModeDryTest   -> True
         ModeDepTest   -> True
