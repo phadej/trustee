@@ -1,3 +1,7 @@
 packages: .
 with-compiler: ghc-8.4.4
-allow-newer: cabal-plan:aeson
+
+source-repository-package
+  type: git
+  location: https://github.com/phadej/lukko.git
+  tag: 718f02e93fb97f596afd44027424bba2eed7b56f
