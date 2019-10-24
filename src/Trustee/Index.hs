@@ -4,19 +4,20 @@ module Trustee.Index (
     indexValueVersions,
   ) where
 
-import Control.Applicative             ((<|>))
-import Data.List                       (foldl')
-import Data.Time                       (UTCTime)
+import Control.Applicative                 ((<|>))
+import Data.List                           (foldl')
+import Data.Time                           (UTCTime)
 import Data.Time.Clock.POSIX
        (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Distribution.Compat.CharParsing (char, munch1, string)
+import Distribution.Compat.CharParsing     (char, munch1, string)
+import Distribution.Package                (PackageName)
+import Distribution.Parsec
+       (explicitEitherParsec, parsec, runParsecParser)
 import Distribution.Parsec.FieldLineStream (fieldLineStreamFromBS)
-import Distribution.Package            (PackageName)
-import Distribution.Types.Dependency (Dependency (..))
-import Distribution.Parsec.Class       (explicitEitherParsec, parsec, runParsecParser)
-import Distribution.Version            (Version, VersionRange, withinRange)
-import System.Directory                (getAppUserDataDirectory)
-import System.FilePath                 ((</>))
+import Distribution.Types.Dependency       (Dependency (..))
+import Distribution.Version                (Version, VersionRange, withinRange)
+import System.Directory                    (getAppUserDataDirectory)
+import System.FilePath                     ((</>))
 
 import qualified Codec.Archive.Tar       as Tar
 import qualified Codec.Archive.Tar.Entry as Tar
@@ -83,7 +84,7 @@ readIndex indexState = do
         Right (Left _) -> case Tar.entryContent entry of
             Tar.NormalFile lbs _ -> case runParsecParser parsec fp (fieldLineStreamFromBS $ LBS.toStrict lbs) of
                 Left _    -> pair
-                Right (Dependency pkgName vr) -> Pair
+                Right (Dependency pkgName vr _) -> Pair
                     (Map.insertWith (<>) pkgName (preferred vr) m)
                     (Tar.entryTime entry)
             _ -> pair

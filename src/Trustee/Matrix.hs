@@ -1,14 +1,14 @@
 module Trustee.Matrix (cmdMatrix) where
 
-import Data.Char                 (isDigit)
-import Data.Function             (on)
-import Data.Functor.Classes      (liftCompare)
-import Data.List                 (sortBy)
-import Data.Maybe                (mapMaybe)
-import Data.Semigroup            ((<>))
-import Distribution.Compat.ReadP (many, munch1, (+++))
-import Distribution.Text         (display)
-import Path                      (Abs, Dir, Path)
+import Data.Char                    (isDigit)
+import Data.Function                (on)
+import Data.Functor.Classes         (liftCompare)
+import Data.List                    (sortBy)
+import Data.Maybe                   (mapMaybe)
+import Data.Semigroup               ((<>))
+import Distribution.Text            (display)
+import Path                         (Abs, Dir, Path)
+import Text.ParserCombinators.ReadP (many, munch1, (+++))
 
 import qualified Path
 

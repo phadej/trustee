@@ -40,8 +40,7 @@ import System.Clock
        (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
 import System.Console.Concurrent  (outputConcurrent)
 import System.Console.Regions
-       (RegionLayout (Linear), displayConsoleRegions, setConsoleRegion,
-       withConsoleRegion)
+       (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
 import System.Exit                (ExitCode (..))
 import System.FilePath            ((</>))
 import System.Posix.Process       (ProcessTimes (..), getProcessTimes)

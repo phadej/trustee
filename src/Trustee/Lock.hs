@@ -1,27 +1,24 @@
 {-# LANGUAGE BangPatterns #-}
 module Trustee.Lock (withLock) where
 
-import Control.Concurrent        (threadDelay)
-import Control.Exception         (bracket, handle)
-import Control.Monad             (when)
-import Data.Foldable             (for_)
-import Data.Function             ((&))
-import GHC.IO.Handle.Lock        (LockMode (ExclusiveLock), hTryLock)
-import System.Console.Concurrent (outputConcurrent)
+import Control.Concurrent     (threadDelay)
+import Control.Exception      (bracket, handle)
+import Control.Monad          (when)
+import Data.Function          ((&))
+import Lukko
+       (LockMode (ExclusiveLock), fdClose, fdOpen, fdTryLock, fdUnlock)
 import System.Console.Regions
-       (RegionLayout (Linear), closeConsoleRegion, setConsoleRegion, displayConsoleRegions,
-       withConsoleRegion)
+       (RegionLayout (Linear), closeConsoleRegion, displayConsoleRegions,
+       setConsoleRegion, withConsoleRegion)
 import System.Directory
        (XdgDirectory (..), createDirectoryIfMissing, emptyPermissions,
        getXdgDirectory, setOwnerExecutable, setOwnerReadable,
        setOwnerSearchable, setOwnerWritable, setPermissions)
-import System.FilePath           ((</>))
-import System.IO
-       (IOMode (ReadWriteMode), hClose, hFlush, openFile)
-import System.Posix.Process      (getProcessID)
-import System.Posix.Types        (CPid (..))
-import System.Process            (readProcessWithExitCode)
-import Text.Read                 (readMaybe)
+import System.FilePath        ((</>))
+import System.Posix.Process   (getProcessID)
+import System.Posix.Types     (CPid (..))
+import System.Process         (readProcessWithExitCode)
+import Text.Read              (readMaybe)
 
 withLock :: IO a -> IO a
 withLock action = do
@@ -35,37 +32,40 @@ withLock action = do
 
     let lockFile = cacheDir </> "lock"
     let pidFile  = cacheDir </> "pid"
-    let open = openFile lockFile ReadWriteMode
+    let close fd = fdUnlock fd >> fdClose fd
     displayConsoleRegions $ withConsoleRegion Linear $ \region ->
-        bracket open hClose (loop (0 :: Integer) region lockFile pidFile)
+        bracket (fdOpen lockFile) close $
+            loop (0 :: Integer) region lockFile pidFile
   where
-    doNothing :: IOError -> IO ()
-    doNothing _ = return ()
+    doNothing :: IOError -> IO String
+    doNothing _ = return ""
 
     divides :: Integral a => a -> a -> Bool
     divides d x = x `mod` d == 0
 
-    loop !n region lockFile pidFile h = do
-        l <- hTryLock h ExclusiveLock
+    loop !n region lockFile pidFile fd = do
+        l <- fdTryLock fd ExclusiveLock
         if l
         then do
             CPid pid <- getProcessID
             writeFile pidFile (show pid)
-            hFlush h
             closeConsoleRegion region
             action
         else do
-            when (n < 10 || n < 300 && 10 `divides` n || 300 `divides` n) $ outputConcurrent $
-                if n < 300
-                then "other trustee process running, waited " ++ show n ++ " secs\n"
-                else "other trustee process running, waited " ++ show (n `div` 60) ++ " mins\n"
+            when (n < 10 || 10 `divides` n) $ do
+                let fstLine | n < 300   = "other trustee process running, waited " ++ show n ++ "s\n"
+                            | otherwise = "other trustee process running, waited " ++ show (n `div` 60) ++ "m" ++ show (n `mod` 60) ++ "s\n"
 
-            handle doNothing $ do
-                mpid <- readMaybe <$> readFile pidFile
-                for_ mpid $ \pid -> do
-                    (_, out, _) <- readProcessWithExitCode "ps" ["-f", "--cumulative", show (pid :: Int)] ""
-                    setConsoleRegion region $ "FOO " ++ out
+                sndLine <- handle doNothing $ do
+                    mpid <- readMaybe <$> readFile pidFile
+                    case mpid of
+                        Nothing  -> return ""
+                        Just pid -> do
+                            (_, out, _) <- readProcessWithExitCode "ps" ["-f", "--cumulative", show (pid :: Int)] ""
+                            return out
 
-            -- wait 5 seconds, and try again
+                setConsoleRegion region $ fstLine ++ sndLine
+
+            -- wait a second, and try again
             threadDelay $ 1 * 1000 * 1000
-            loop (succ n) region lockFile pidFile h
+            loop (succ n) region lockFile pidFile fd

@@ -198,4 +198,4 @@ switch = O.switch . mconcat
 
 mkConstraintMap :: [Dependency] -> Map PackageName VersionRange
 mkConstraintMap = Map.fromList . map toPair where
-    toPair (Dependency pname vr) = (pname, vr)
+    toPair (Dependency pname vr _) = (pname, vr)

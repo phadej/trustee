@@ -314,7 +314,7 @@ toDepMap :: [Dependency] -> DepMap
 toDepMap =
     DepMap . Map.fromListWith intersectVersionRanges . map dependencyToPair
   where
-    dependencyToPair (Dependency p vr) = (p, vr)
+    dependencyToPair (Dependency p vr _) = (p, vr)
 
 -- | Like 'simplifyCondTree', but when a condition cannot be evaluated, both branches are included.
 simplifyCondTree'
