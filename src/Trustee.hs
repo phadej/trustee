@@ -1,7 +1,5 @@
 module Trustee (main) where
 
-import Path.IO (getCurrentDir)
-
 import Trustee.Bounds
 import Trustee.Config
 import Trustee.Get
@@ -10,11 +8,11 @@ import Trustee.Monad
 import Trustee.NewBuild
 import Trustee.Options  (Cmd (..), goPlanParams, parseOpts)
 
-import qualified Path.IO as Path
+import qualified System.Path.IO as Path
 
 main :: IO ()
 main = do
-    cwd <- getCurrentDir
+    cwd <- Path.getCurrentDirectory
     (opts, cmd) <- parseOpts
     let pp = goPlanParams opts
     cfg <- readConfig
@@ -23,5 +21,5 @@ main = do
         CmdNewBuild args   -> runM cfg pp $ cmdNewBuild opts cwd args
         CmdGet pkgname vr  -> cmdGet opts pkgname vr
         CmdMatrix test dirs -> do
-            dirs' <- traverse (Path.resolveDir cwd) dirs
+            dirs' <- traverse Path.makeAbsolute dirs
             runM cfg pp $ cmdMatrix opts test dirs'

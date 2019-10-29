@@ -1,8 +1,7 @@
 module Trustee.Bounds (cmdBounds) where
 
 import Algebra.Lattice
-       (BoundedMeetSemiLattice (top), Lattice (..),
-       meets)
+       (BoundedMeetSemiLattice (top), Lattice (..), meets)
 import Control.Monad                          (unless, when)
 import Control.Monad.IO.Class                 (liftIO)
 import Data.Function                          (on)
@@ -25,15 +24,15 @@ import Distribution.Version
        (Version, VersionRange, intersectVersionRanges, mkVersion,
        orEarlierVersion, orLaterVersion, simplifyVersionRange, thisVersion,
        unionVersionRanges, versionNumbers, withinRange)
-import Path                                   (Abs, Dir, Path)
 import System.Exit                            (ExitCode (..))
 import System.FilePath.Glob                   (compile, globDir1)
+import System.Path                            (Absolute, Path)
 
 import qualified Data.List.NonEmpty              as NE
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
 import qualified Distribution.PackageDescription as PD
-import qualified Path
+import qualified System.Path as Path
 
 import Trustee.GHC     hiding (index)
 import Trustee.Index
@@ -43,7 +42,7 @@ import Trustee.Table
 import Trustee.Txt
 import Trustee.Util
 
-cmdBounds :: GlobalOpts -> Path Abs Dir -> Bool -> Maybe Limit -> M ()
+cmdBounds :: GlobalOpts -> Path Absolute -> Bool -> Maybe Limit -> M ()
 cmdBounds opts dir verify (Just limit) = cmdBoundsLimit opts dir verify limit
 cmdBounds opts dir verify Nothing      = cmdBoundsSweep opts dir verify
 
@@ -87,7 +86,7 @@ makeSweepCell r = case r of
       | otherwise = intercalate ", " $ map prettyShow $ NE.toList vs
 
 
-cmdBoundsSweep :: GlobalOpts -> Path Abs Dir -> Bool -> M ()
+cmdBoundsSweep :: GlobalOpts -> Path Absolute -> Bool -> M ()
 cmdBoundsSweep opts dir verify = do
     let ghcs = ghcsInRange (goGhcVersions opts)
     xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
@@ -106,7 +105,7 @@ cmdBoundsSweep opts dir verify = do
 
 sweepForGhc
     :: Bool
-    -> Path Abs Dir
+    -> Path Absolute
     -> Map.Map PackageName (Set.Set Version)
     -> GenericPackageDescription
     -> GHCVer
@@ -162,7 +161,7 @@ sweepForGhc verify dir index gpd ghcVersion = do
 -- Limit
 -------------------------------------------------------------------------------
 
-cmdBoundsLimit :: GlobalOpts -> Path Abs Dir -> Bool -> Limit -> M ()
+cmdBoundsLimit :: GlobalOpts -> Path Absolute -> Bool -> Limit -> M ()
 cmdBoundsLimit opts dir verify limit = do
     let ghcs = ghcsInRange (goGhcVersions opts)
     xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
@@ -198,7 +197,7 @@ makeCell (ResultFail v)    = mkTxt Red     $ prettyShow v
 boundsForGhc
     :: Bool
     -> Limit
-    -> Path Abs Dir
+    -> Path Absolute
     -> Map.Map PackageName (Set.Set Version)
     -> GenericPackageDescription
     -> GHCVer

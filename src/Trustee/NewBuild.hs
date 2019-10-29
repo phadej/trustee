@@ -13,8 +13,8 @@ import Distribution.Package (PackageName, mkPackageName)
 import Distribution.Text    (display)
 import Distribution.Version
        (VersionRange, intersectVersionRanges, mkVersion, thisVersion)
-import Path                 (Abs, Dir, Path)
 import System.Exit          (ExitCode (..))
+import System.Path          (Absolute, Path)
 
 import Trustee.GHC
 import Trustee.Monad
@@ -43,7 +43,7 @@ isResultDepFail :: Result -> Maybe (String, String)
 isResultDepFail (ResultDepFail _ o e) = Just (o, e)
 isResultDepFail _                     = Nothing
 
-cmdNewBuild :: GlobalOpts -> Path Abs Dir -> [String] -> M ()
+cmdNewBuild :: GlobalOpts -> Path Absolute -> [String] -> M ()
 cmdNewBuild opts dir args = do
     let ghcs = ghcsInRange (goGhcVersions opts)
 
@@ -88,7 +88,7 @@ cmdNewBuild opts dir args = do
     mkCell ResultDepFail {} = mkTxt Magenta "--dependencies failed"
     mkCell ResultFail {}    = mkTxt Red     "failure"
 
-matrixRow' :: Traversable t => Bool -> t GHCVer -> Map PackageName VersionRange -> Path Abs Dir -> M (t Result)
+matrixRow' :: Traversable t => Bool -> t GHCVer -> Map PackageName VersionRange -> Path Absolute -> M (t Result)
 matrixRow' test ghcs constraints dir = forConcurrently ghcs $ \ghcVersion -> runEarlyExit $ do
     (ec0, o0, e0) <- lift $ runCabal ModeDry dir ghcVersion constraints
     when (isFailure ec0) $ exit $ ResultDryFail ec0 o0 e0
@@ -137,7 +137,7 @@ matrixRow' test ghcs constraints dir = forConcurrently ghcs $ \ghcVersion -> run
     testBin (Cabal.CompNameTest _, ci) = Cabal.ciBinFile ci
     testBin _                          = Nothing
 
-matrixRow :: Traversable t => t GHCVer -> [String] -> Path Abs Dir -> M (t Result)
+matrixRow :: Traversable t => t GHCVer -> [String] -> Path Absolute -> M (t Result)
 matrixRow ghcs args dir = do
     (_jGHC, jCabal) <- jobs
     forConcurrently ghcs $ \ghcVersion -> runEarlyExit $ do
