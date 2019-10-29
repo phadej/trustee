@@ -5,6 +5,7 @@
 module Trustee.Monad (
     M,
     runM,
+    runUrakkaM,
     putStrs,
     forConcurrently,
     runCabal,
@@ -16,13 +17,16 @@ module Trustee.Monad (
     jobs,
     ) where
 
+import Control.Monad            (when)
+import Control.Concurrent.Async   (async, cancel, wait)
 import Control.Concurrent.STM
-       (TVar, atomically, modifyTVar', newTVar, readTVar, readTVarIO, retry,
-       writeTVar)
+       (STM, TVar, atomically, modifyTVar', newTVar, readTVar, readTVarIO,
+       retry, writeTVar)
 import Control.DeepSeq            (force)
 import Control.Exception          (bracket, evaluate)
 import Control.Monad              (unless)
 import Control.Monad.IO.Class     (MonadIO (..))
+import Control.Monad.IO.Unlift    (MonadUnliftIO (..))
 import Control.Monad.Trans.Reader (ReaderT (..))
 import Data.List                  (isPrefixOf)
 import Data.Map                   (Map)
@@ -37,6 +41,7 @@ import Distribution.Version
 import Foreign.C.Types            (CClock (..))
 import System.Clock
        (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
+import System.Console.ANSI        (setTitle)
 import System.Console.Concurrent  (outputConcurrent)
 import System.Console.Regions
        (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
@@ -45,6 +50,11 @@ import System.FilePath            ((</>))
 import System.Path                (Absolute, Path)
 import System.Posix.Process       (ProcessTimes (..), getProcessTimes)
 import Text.Printf                (printf)
+import Urakka
+       (Urakka, ConcSt, overEstimate, runConcurrent', underEstimate, urakkaDone,
+       urakkaOverEstimate, urakkaQueued)
+import Urakka.Estimation
+       (addEstimationPoint, currentEstimate, mkEstimator)
 
 import qualified Cabal.Plan               as Cabal
 import qualified Control.Concurrent.Async as Async
@@ -66,7 +76,7 @@ import Trustee.Table
 import Trustee.Txt
 
 newtype M a = M { unM :: ReaderT Env IO a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadUnliftIO)
 
 data Stats' a = Stats
     { statsDryRuns   :: !a
@@ -206,13 +216,69 @@ runM cfg pp m = withLock $ withConsoleRegion Linear $ \region -> do
 
     return x
 
+runUrakkaM :: Config -> PlanParams -> M (Urakka () a) -> IO a
+runUrakkaM cfg pp actionU = runM cfg pp $ do
+    u <- actionU
+    withRunInIO $ \_runInIO -> withConsoleRegion Linear $ \region -> do
+        estimator <- mkEstimator
+
+        let mi = underEstimate u
+        let ma = overEstimate u
+
+        tz           <- getCurrentTimeZone
+        startUtcTime <- getCurrentTime
+
+        let onDone :: ConcSt -> IO ()
+            onDone = addEstimationPoint estimator
+
+        let urakkaLine :: ConcSt -> STM String
+            urakkaLine concSt = do
+                q <- urakkaQueued concSt
+                d <- urakkaDone concSt
+                ma' <- urakkaOverEstimate concSt
+
+                dur <- currentEstimate estimator
+                let eta = fmap (\dur' -> utcToLocalTime tz $ addUTCTime (realToFrac dur') startUtcTime) dur
+
+                return $ unwords
+                    [ "urakka: "
+                    , show d
+                    , "/"
+                    , show (max mi q)
+                    , "(" ++ show ma' ++ "/" ++ show ma ++ ")"
+                    -- , maybe "est. dur:" (printf "%.02fs") dur
+                    , maybe "no ETA" (formatTime defaultTimeLocale "ETA %T") eta
+                    , show dur
+                    ]
+
+        (asyncUrakka, concSt) <- runConcurrent' onDone () u
+
+        titleThread <- async $ do
+            let loop :: Maybe String -> IO ()
+                loop old = do
+                    title <- atomically $ do
+                        new <- urakkaLine concSt
+                        when (Just new == old) retry
+                        return new
+
+                    setTitle title
+                    loop (Just title)
+
+            loop Nothing
+
+        setConsoleRegion region $ fmap T.pack $ urakkaLine concSt
+
+        result <- wait asyncUrakka
+        cancel titleThread
+        return result
+
 mkM :: (Env -> IO a) -> M a
 mkM = M . ReaderT
 
 runM' :: Env -> M a -> IO a
 runM' env m = runReaderT (unM m) env
 
-putStrs :: [String] -> M ()
+putStrs :: MonadIO m => [String] -> m ()
 putStrs = liftIO . outputConcurrent . unlines
 
 forConcurrently :: Traversable t => t a -> (a -> M b) -> M (t b)
@@ -315,7 +381,7 @@ runWithGHC :: Mode' -> Path Absolute -> GHCVer -> FilePath -> [String] -> M (Exi
 runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putStats
   where
     dry = mode == ModeDry'
-    dir' = Path.toFilePath $ Path.takeDirectory dir
+    dir' = Path.toUnrootedFilePath $ Path.takeFileName dir
     formatted = cmd ++ " " ++ unwords args'
     -- TODO: verbosity flag to show all
     args' = take 10 $ filter (not . isPrefixOf "--builddir=") args

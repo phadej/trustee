@@ -5,6 +5,7 @@ module Trustee.NewBuild (
     Result (..),
     ) where
 
+import Control.DeepSeq (NFData (..))
 import Control.Applicative  ((<|>))
 import Control.Monad        (unless, when)
 import Data.Map             (Map)
@@ -34,6 +35,10 @@ data Result
     | ResultDepFail ExitCode String String
     | ResultFail ExitCode String String
   deriving Show
+
+instance NFData Result where
+    rnf ResultOk = ()
+    rnf _ = ()
 
 isResultFail :: Result -> Maybe (String, String)
 isResultFail (ResultFail _ o e) = Just (o, e)

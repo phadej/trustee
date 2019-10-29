@@ -15,7 +15,7 @@ import Distribution.Package          (PackageName)
 import Distribution.Text             (simpleParse)
 import Distribution.Types.Dependency (Dependency (..))
 import Distribution.Version          (VersionRange, anyVersion)
-import System.Path (FsPath, fromFilePath)
+import System.Path                   (FsPath, fromFilePath)
 
 import qualified Data.Map            as Map
 import qualified Options.Applicative as O
@@ -44,6 +44,7 @@ data PlanParams = PlanParams
 data Cmd
     = CmdNewBuild [String]
     | CmdMatrix Bool [FsPath]
+    | CmdMatrix2 Bool [FsPath]
     | CmdGet PackageName VersionRange
     | CmdBounds Bool (Maybe Limit)
 
@@ -124,6 +125,7 @@ cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
     [ O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
     , O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
+    , O.command "matrix2" $ O.info cmdMatrix2 $ O.progDesc "Build matrix"
     , O.command "get" $ O.info cmdGet $ O.progDesc "Fetch package sources"
     , O.command "bounds" $ O.info cmdBounds $ O.progDesc "Find and check bounds"
     ]
@@ -176,6 +178,19 @@ cmdMatrix = CmdMatrix
         , O.help "package directories to include in matrix"
         ]
 
+cmdMatrix2 :: O.Parser Cmd
+cmdMatrix2 = CmdMatrix2
+    <$> switch
+        [ O.help "Run tests also"
+        , O.long "test"
+        ]
+    <*> many pkgs
+    <**> O.helper
+  where
+    pkgs = O.argument (O.maybeReader $ Just . fromFilePath) $ mconcat
+        [ O.metavar "pkg-dir"
+        , O.help "package directories to include in matrix"
+        ]
 
 cmdGet :: O.Parser Cmd
 cmdGet = CmdGet
