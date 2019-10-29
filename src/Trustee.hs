@@ -4,6 +4,7 @@ import Trustee.Bounds
 import Trustee.Config
 import Trustee.Get
 import Trustee.Matrix
+import Trustee.Matrix2
 import Trustee.Monad
 import Trustee.NewBuild
 import Trustee.Options  (Cmd (..), goPlanParams, parseOpts)
@@ -23,3 +24,7 @@ main = do
         CmdMatrix test dirs -> do
             dirs' <- traverse Path.makeAbsolute dirs
             runM cfg pp $ cmdMatrix opts test dirs'
+
+        CmdMatrix2 test dirs -> do
+            dirs' <- traverse Path.makeAbsolute dirs
+            runUrakkaM cfg pp $ cmdMatrix2 opts test dirs'

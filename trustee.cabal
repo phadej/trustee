@@ -26,6 +26,7 @@ library
     Trustee.Index
     Trustee.Lock
     Trustee.Matrix
+    Trustee.Matrix2
     Trustee.Monad
     Trustee.NewBuild
     Trustee.Options
@@ -33,6 +34,7 @@ library
     Trustee.Txt
     Trustee.Util
 
+  exposed-modules:  Urakka.Estimation
   build-depends:
     , aeson                 ^>=1.4.0.0
     , aeson-compat          ^>=0.3.7.1
@@ -54,10 +56,12 @@ library
     , filepath              ^>=1.4.1.2
     , Glob                  ^>=0.10
     , lattices              ^>=2
-    , lukko
+    , lukko                 ^>=0.1
     , optparse-applicative  ^>=0.15.1.0
     , paths                 ^>=0.2.0.0
     , process               ^>=1.6.1.0
+    , regression-simple
+    , selective             ^>=0.3
     , stm                   ^>=2.4.4.1 || ^>=2.5.0.0
     , tar                   ^>=0.5.0.3
     , tdigest               ^>=0.2
@@ -65,6 +69,8 @@ library
     , time                  ^>=1.8.0.2
     , transformers          ^>=0.5.2.0
     , unix                  ^>=2.7.2.2
+    , unliftio-core         ^>=0.1.2.0
+    , urakka
     , vec                   ^>=0.2
 
   hs-source-dirs:   src
