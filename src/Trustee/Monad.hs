@@ -35,7 +35,6 @@ import Distribution.Text          (display)
 import Distribution.Version
        (VersionRange, intersectVersionRanges, simplifyVersionRange)
 import Foreign.C.Types            (CClock (..))
-import Path                       (Abs, Dir, Path)
 import System.Clock
        (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
 import System.Console.Concurrent  (outputConcurrent)
@@ -43,6 +42,7 @@ import System.Console.Regions
        (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
 import System.Exit                (ExitCode (..))
 import System.FilePath            ((</>))
+import System.Path                (Absolute, Path)
 import System.Posix.Process       (ProcessTimes (..), getProcessTimes)
 import Text.Printf                (printf)
 
@@ -55,7 +55,7 @@ import qualified Data.Map.Strict          as Map
 import qualified Data.TDigest             as TD
 import qualified Data.Text                as T
 import qualified Data.Text.Encoding       as TE
-import qualified Path
+import qualified System.Path              as Path
 import qualified System.Process           as Process
 
 import Trustee.Config
@@ -242,7 +242,7 @@ toMode' ModeDepTest   = ModeDep'
 toMode' ModeBuild     = ModeBld'
 toMode' ModeBuildTest = ModeBld'
 
-findPlan :: Path Abs Dir -> GHCVer -> Map PackageName VersionRange -> M Cabal.PlanJson
+findPlan :: Path Absolute -> GHCVer -> Map PackageName VersionRange -> M Cabal.PlanJson
 findPlan dir ghcVersion constraints = liftIO $
     Cabal.findAndDecodePlanJson (Cabal.InBuildDir dir')
   where
@@ -255,7 +255,7 @@ findPlan dir ghcVersion constraints = liftIO $
         $ SHA512.hashlazy
         $ Binary.encode (ghcVersion, constraintsS)
 
-runCabal :: Mode -> Path Abs Dir -> GHCVer -> Map PackageName VersionRange -> M (ExitCode, String, String)
+runCabal :: Mode -> Path Absolute -> GHCVer -> Map PackageName VersionRange -> M (ExitCode, String, String)
 runCabal mode dir ghcVersion constraints = do
     constraints' <- askConstraints constraints
     let constraintsS = fmap simplifyVersionRange constraints'
@@ -311,11 +311,11 @@ runCabal mode dir ghcVersion constraints = do
         $ SHA512.hashlazy
         $ Binary.encode (ghcVersion, constraintsS)
 
-runWithGHC :: Mode' -> Path Abs Dir -> GHCVer -> FilePath -> [String] -> M (ExitCode, String, String)
+runWithGHC :: Mode' -> Path Absolute -> GHCVer -> FilePath -> [String] -> M (ExitCode, String, String)
 runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putStats
   where
     dry = mode == ModeDry'
-    dir' = Path.toFilePath $ Path.dirname dir
+    dir' = Path.toFilePath $ Path.takeDirectory dir
     formatted = cmd ++ " " ++ unwords args'
     -- TODO: verbosity flag to show all
     args' = take 10 $ filter (not . isPrefixOf "--builddir=") args

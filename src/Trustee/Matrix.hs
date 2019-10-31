@@ -7,10 +7,10 @@ import Data.List                    (sortBy)
 import Data.Maybe                   (mapMaybe)
 import Data.Semigroup               ((<>))
 import Distribution.Text            (display)
-import Path                         (Abs, Dir, Path)
+import System.Path                  (Absolute, Path)
 import Text.ParserCombinators.ReadP (many, munch1, (+++))
 
-import qualified Path
+import qualified System.Path as Path
 
 import Trustee.GHC
 import Trustee.Monad
@@ -20,7 +20,7 @@ import Trustee.Table
 import Trustee.Txt
 import Trustee.Util
 
-cmdMatrix :: GlobalOpts -> Bool -> [Path Abs Dir] -> M ()
+cmdMatrix :: GlobalOpts -> Bool -> [Path Absolute] -> M ()
 cmdMatrix opts test dirs' = do
     let ghcs = reverse $ ghcsInRange (goGhcVersions opts)
     xss <- forConcurrently dirs $ matrixRow' test ghcs mempty
@@ -33,7 +33,7 @@ cmdMatrix opts test dirs' = do
     dirs = sortBy (liftCompare cmp `on` parts) dirs'
     parts
         = maybeReadP partsP
-        . Path.toFilePath . Path.dirname
+        . Path.toFilePath . Path.takeDirectory
 
     partsP = many (fmap Left (munch1 (not . isDigit)) +++ fmap (Right . read) (munch1 isDigit))
 
@@ -51,9 +51,9 @@ cmdMatrix opts test dirs' = do
         = (emptyTxt : map (mkTxt Black . display. toVersion) ghcs)
         : zipWith mkRow dirs xss
 
-    mkRow :: Path Abs Dir -> [Result] -> [Txt]
+    mkRow :: Path Absolute -> [Result] -> [Txt]
     mkRow p xs
-        = mkTxt Black (Path.toFilePath $ Path.dirname p)
+        = mkTxt Black (Path.toFilePath $ Path.takeDirectory p)
         : map mkCell xs
 
     mkCell :: Result -> Txt

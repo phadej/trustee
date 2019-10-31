@@ -15,6 +15,7 @@ import Distribution.Package          (PackageName)
 import Distribution.Text             (simpleParse)
 import Distribution.Types.Dependency (Dependency (..))
 import Distribution.Version          (VersionRange, anyVersion)
+import System.Path (FsPath, fromFilePath)
 
 import qualified Data.Map            as Map
 import qualified Options.Applicative as O
@@ -42,10 +43,9 @@ data PlanParams = PlanParams
 
 data Cmd
     = CmdNewBuild [String]
-    | CmdMatrix Bool [FilePath]
+    | CmdMatrix Bool [FsPath]
     | CmdGet PackageName VersionRange
     | CmdBounds Bool (Maybe Limit)
-  deriving Show
 
 data Limit = LimitUpper | LimitLower
   deriving Show
@@ -171,7 +171,7 @@ cmdMatrix = CmdMatrix
     <*> many pkgs
     <**> O.helper
   where
-    pkgs = O.strArgument $ mconcat
+    pkgs = O.argument (O.maybeReader $ Just . fromFilePath) $ mconcat
         [ O.metavar "pkg-dir"
         , O.help "package directories to include in matrix"
         ]
