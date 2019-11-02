@@ -4,27 +4,24 @@ import Trustee.Bounds
 import Trustee.Config
 import Trustee.Get
 import Trustee.Matrix
-import Trustee.Matrix2
 import Trustee.Monad
-import Trustee.NewBuild
 import Trustee.Options  (Cmd (..), goPlanParams, parseOpts)
 
-import qualified System.Path.IO as Path
+import Peura
 
 main :: IO ()
-main = do
-    cwd <- Path.getCurrentDirectory
-    (opts, cmd) <- parseOpts
-    let pp = goPlanParams opts
-    cfg <- readConfig
-    case cmd of
-        CmdBounds verify l -> runM cfg pp $ cmdBounds opts cwd verify l
-        CmdNewBuild args   -> runM cfg pp $ cmdNewBuild opts cwd args
-        CmdGet pkgname vr  -> cmdGet opts pkgname vr
-        CmdMatrix test dirs -> do
-            dirs' <- traverse Path.makeAbsolute dirs
-            runM cfg pp $ cmdMatrix opts test dirs'
-
-        CmdMatrix2 test dirs -> do
-            dirs' <- traverse Path.makeAbsolute dirs
-            runUrakkaM cfg pp $ cmdMatrix2 opts test dirs'
+main = runPeu () $ configure >>= \(opts, pp, cmd, cfg) -> case cmd of
+    CmdGet pkgname vr  -> cmdGet opts pkgname vr
+    CmdBounds verify l -> runM cfg pp $ do
+        cwd <- getCurrentDirectory
+        runUrakkaM $ cmdBounds opts cwd verify l
+    CmdMatrix test dirs -> runM cfg pp $ do
+        dirs' <- traverse makeAbsolute dirs
+        runUrakkaM $ cmdMatrix opts test dirs'
+  where
+    configure = do
+        (opts, cmd) <- liftIO parseOpts
+        let pp = goPlanParams opts
+        cfg <- readConfig
+        return (opts, pp, cmd,cfg)
+      

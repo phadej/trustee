@@ -1,0 +1,5 @@
+packages: .
+tests:    True
+
+package handle-lock
+  ghc-options: -Wall

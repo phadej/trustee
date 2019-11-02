@@ -6,6 +6,8 @@ module Urakka.Estimation (
     MonadSTM (..),
     ) where
 
+import Prelude
+
 import Control.Concurrent.STM
        (STM, newTVar, TVar, atomically, modifyTVar', readTVar, writeTVar)
 import System.Clock             (TimeSpec, Clock (Monotonic), getTime, toNanoSecs)

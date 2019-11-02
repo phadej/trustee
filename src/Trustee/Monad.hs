@@ -7,7 +7,6 @@ module Trustee.Monad (
     runM,
     runUrakkaM,
     putStrs,
-    forConcurrently,
     runCabal,
     findPlan,
     Mode (..),
@@ -17,25 +16,15 @@ module Trustee.Monad (
     jobs,
     ) where
 
-import Control.Monad            (when)
 import Control.Concurrent.Async   (async, cancel, wait)
 import Control.Concurrent.STM
        (STM, TVar, atomically, modifyTVar', newTVar, readTVar, readTVarIO,
        retry, writeTVar)
-import Control.DeepSeq            (force)
-import Control.Exception          (bracket, evaluate)
-import Control.Monad              (unless)
-import Control.Monad.IO.Class     (MonadIO (..))
-import Control.Monad.IO.Unlift    (MonadUnliftIO (..))
-import Control.Monad.Trans.Reader (ReaderT (..))
+import Control.Exception          (evaluate)
 import Data.List                  (isPrefixOf)
-import Data.Map                   (Map)
-import Data.Maybe                 (fromMaybe)
 import Data.Time
        (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime,
        getCurrentTimeZone, utcToLocalTime)
-import Distribution.Package       (PackageName)
-import Distribution.Text          (display)
 import Distribution.Version
        (VersionRange, intersectVersionRanges, simplifyVersionRange)
 import Foreign.C.Types            (CClock (..))
@@ -46,27 +35,25 @@ import System.Console.Concurrent  (outputConcurrent)
 import System.Console.Regions
        (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
 import System.Exit                (ExitCode (..))
-import System.FilePath            ((</>))
-import System.Path                (Absolute, Path)
 import System.Posix.Process       (ProcessTimes (..), getProcessTimes)
 import Text.Printf                (printf)
 import Urakka
-       (Urakka, ConcSt, overEstimate, runConcurrent', underEstimate, urakkaDone,
-       urakkaOverEstimate, urakkaQueued)
+       (ConcSt, Urakka, overEstimate, runConcurrent', underEstimate,
+       urakkaDone, urakkaOverEstimate, urakkaQueued)
 import Urakka.Estimation
        (addEstimationPoint, currentEstimate, mkEstimator)
 
-import qualified Cabal.Plan               as Cabal
-import qualified Control.Concurrent.Async as Async
-import qualified Crypto.Hash.SHA512       as SHA512
-import qualified Data.Binary              as Binary
-import qualified Data.ByteString.Base16   as BS16
-import qualified Data.Map.Strict          as Map
-import qualified Data.TDigest             as TD
-import qualified Data.Text                as T
-import qualified Data.Text.Encoding       as TE
-import qualified System.Path              as Path
-import qualified System.Process           as Process
+import qualified Cabal.Plan                as Cabal
+import qualified Crypto.Hash.SHA512        as SHA512
+import qualified Data.Binary               as Binary
+import qualified Data.ByteString.Base16    as BS16
+import qualified Data.Map.Strict           as Map
+import qualified Data.TDigest              as TD
+import qualified Data.Text                 as T
+import qualified Data.Text.Encoding        as TE
+import qualified System.Path               as Path
+import qualified System.Process            as Process
+import qualified System.Process.ByteString as ProcessExtras
 
 import Trustee.Config
 import Trustee.GHC
@@ -75,8 +62,9 @@ import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
 
-newtype M a = M { unM :: ReaderT Env IO a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadUnliftIO)
+import Peura hiding (evaluate)
+
+type M = Peu Env
 
 data Stats' a = Stats
     { statsDryRuns   :: !a
@@ -123,8 +111,8 @@ runM
     :: Config      -- ^ configuration
     -> PlanParams  -- ^ plan configuration
     -> M a         -- ^ action
-    -> IO a
-runM cfg pp m = withLock $ withConsoleRegion Linear $ \region -> do
+    -> Peu () a
+runM cfg pp m = liftIO $ withLock $ withConsoleRegion Linear $ \region -> do
     -- Start times
     tz           <- getCurrentTimeZone
     startUtcTime <- getCurrentTime
@@ -216,9 +204,10 @@ runM cfg pp m = withLock $ withConsoleRegion Linear $ \region -> do
 
     return x
 
-runUrakkaM :: Config -> PlanParams -> M (Urakka () a) -> IO a
-runUrakkaM cfg pp actionU = runM cfg pp $ do
+runUrakkaM :: M (Urakka () a) -> M a
+runUrakkaM actionU = do
     u <- actionU
+    -- liftIO $ outputConcurrent "Urakka constructed"
     withRunInIO $ \_runInIO -> withConsoleRegion Linear $ \region -> do
         estimator <- mkEstimator
 
@@ -241,7 +230,7 @@ runUrakkaM cfg pp actionU = runM cfg pp $ do
                 let eta = fmap (\dur' -> utcToLocalTime tz $ addUTCTime (realToFrac dur') startUtcTime) dur
 
                 return $ unwords
-                    [ "urakka: "
+                    [ "trustee "
                     , show d
                     , "/"
                     , show (max mi q)
@@ -273,17 +262,13 @@ runUrakkaM cfg pp actionU = runM cfg pp $ do
         return result
 
 mkM :: (Env -> IO a) -> M a
-mkM = M . ReaderT
+mkM f = ask >>= liftIO . f
 
 runM' :: Env -> M a -> IO a
-runM' env m = runReaderT (unM m) env
+runM' = runPeu
 
 putStrs :: MonadIO m => [String] -> m ()
 putStrs = liftIO . outputConcurrent . unlines
-
-forConcurrently :: Traversable t => t a -> (a -> M b) -> M (t b)
-forConcurrently xs f = mkM $ \env ->
-    Async.forConcurrently xs (runM' env . f)
 
 data Mode
     = ModeDry
@@ -312,7 +297,7 @@ findPlan :: Path Absolute -> GHCVer -> Map PackageName VersionRange -> M Cabal.P
 findPlan dir ghcVersion constraints = liftIO $
     Cabal.findAndDecodePlanJson (Cabal.InBuildDir dir')
   where
-    dir' = Path.toFilePath dir </> (".dist-newstyle-trustee/" ++ buildDirSuffix)
+    dir' = Path.toFilePath $ dir </> fromUnrootedFilePath (".dist-newstyle-trustee/" ++ buildDirSuffix)
     constraintsS = fmap simplifyVersionRange constraints
     buildDirSuffix
         = T.unpack
@@ -321,7 +306,7 @@ findPlan dir ghcVersion constraints = liftIO $
         $ SHA512.hashlazy
         $ Binary.encode (ghcVersion, constraintsS)
 
-runCabal :: Mode -> Path Absolute -> GHCVer -> Map PackageName VersionRange -> M (ExitCode, String, String)
+runCabal :: Mode -> Path Absolute -> GHCVer -> Map PackageName VersionRange -> M (ExitCode, ByteString, ByteString)
 runCabal mode dir ghcVersion constraints = do
     constraints' <- askConstraints constraints
     let constraintsS = fmap simplifyVersionRange constraints'
@@ -362,13 +347,13 @@ runCabal mode dir ghcVersion constraints = do
         | test      = "--enable-tests"
         | otherwise = "--disable-tests"
 
-    ghcVersion' = display (toVersion ghcVersion)
+    ghcVersion' = prettyShow (toVersion ghcVersion)
     mode' = toMode' mode
     modeArg = case mode' of
         ModeDry'       -> ["--dry-run"]
         ModeDep'       -> ["--dep"]
         ModeBld'     -> []
-    mkConstraint pkgName vr = "--constraint=" ++ display pkgName ++ display vr
+    mkConstraint pkgName vr = "--constraint=" ++ prettyShow pkgName ++ prettyShow vr
 
     buildDirSuffix constraintsS
         = T.unpack
@@ -377,7 +362,7 @@ runCabal mode dir ghcVersion constraints = do
         $ SHA512.hashlazy
         $ Binary.encode (ghcVersion, constraintsS)
 
-runWithGHC :: Mode' -> Path Absolute -> GHCVer -> FilePath -> [String] -> M (ExitCode, String, String)
+runWithGHC :: Mode' -> Path Absolute -> GHCVer -> FilePath -> [String] -> M (ExitCode, ByteString, ByteString)
 runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putStats
   where
     dry = mode == ModeDry'
@@ -393,6 +378,7 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         modifyTVar' (envRunStats env) (modifyStats pred)
         modifyTVar' (envDoneStats env) (modifyStats succ)
 
+    modifyStats :: (a -> a) -> Stats' a -> Stats' a
     modifyStats f s = case mode of
         ModeBld' -> s { statsBuildRuns = f (statsBuildRuns s) }
         ModeDep'   -> s { statsDepRuns   = f (statsDepRuns s) }
@@ -402,7 +388,7 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         outputConcurrent $ dir' ++ " " ++ colored Blue formatted ++ "\n"
         let process = (Process.proc cmd args) { Process.cwd = Just $ Path.toFilePath dir }
         startTime <- getTime Monotonic
-        (ec, o', e') <- Process.readCreateProcessWithExitCode process ""
+        (ec, o', e') <- ProcessExtras.readCreateProcessWithExitCode process mempty
         endTime <- getTime Monotonic
         let diff = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
         atomically $ do

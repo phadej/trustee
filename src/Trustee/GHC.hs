@@ -5,8 +5,9 @@
 module Trustee.GHC where
 
 import Data.Binary          (Binary)
-import Distribution.Version (Version, VersionRange, mkVersion, withinRange)
-import GHC.Generics         (Generic, Generic1)
+import Distribution.Version (mkVersion, withinRange)
+
+import Peura
 
 import Data.Vec.DataFamily.SpineStrict.Pigeonhole (gtabulate, gindex)
 
@@ -22,7 +23,7 @@ data GHCVer
     | GHC_8_4
     | GHC_8_6
     | GHC_8_8
-  deriving (Eq, Ord, Show, Read, Enum, Bounded, Generic)
+  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
 
 instance Binary GHCVer
 

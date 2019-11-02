@@ -4,8 +4,6 @@ module Trustee.Index (
     indexValueVersions,
   ) where
 
-import Control.Applicative                 ((<|>))
-import Data.List                           (foldl')
 import Data.Time                           (UTCTime)
 import Data.Time.Clock.POSIX
        (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
@@ -15,7 +13,7 @@ import Distribution.Parsec
        (explicitEitherParsec, parsec, runParsecParser)
 import Distribution.Parsec.FieldLineStream (fieldLineStreamFromBS)
 import Distribution.Types.Dependency       (Dependency (..))
-import Distribution.Version                (Version, VersionRange, withinRange)
+import Distribution.Version                (withinRange)
 import System.Directory                    (getAppUserDataDirectory)
 import System.FilePath                     ((</>))
 
@@ -26,6 +24,8 @@ import qualified Data.Map.Strict         as Map
 import qualified Data.Set                as Set
 
 import Trustee.Options (IncludeDeprecated (..))
+
+import Peura hiding ((</>), getAppUserDataDirectory)
 
 type Index = Map.Map PackageName IndexValue
 

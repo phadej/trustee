@@ -11,7 +11,11 @@ module Trustee.Txt (
     ) where
 
 import System.Console.ANSI
-       (setSGRCode, ConsoleLayer (..), ColorIntensity (..), SGR (..), Color(..))
+       (Color (..), ColorIntensity (..), ConsoleLayer (..), SGR (..),
+       setSGRCode)
+
+import Peura
+import Prelude (ShowS, showString)
 
 data Txt = Txt !Color !Int String
 

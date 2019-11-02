@@ -1,30 +1,27 @@
+{-# LANGUAGE DeriveGeneric #-}
 module Trustee.Bounds (cmdBounds) where
 
 import Algebra.Lattice
        (BoundedMeetSemiLattice (top), Lattice (..), meets)
-import Control.Monad                          (unless, when)
-import Control.Monad.IO.Class                 (liftIO)
+import Control.Arrow                          (returnA, (+++), (>>>), (|||))
 import Data.Function                          (on)
-import Data.List                              (intercalate)
-import Data.List.NonEmpty                     (NonEmpty (..))
+import Data.List                              (splitAt)
 import Data.Maybe                             (listToMaybe)
 import Data.Semigroup
-       (Max (..), Min (..), Option (..), Semigroup (..), option)
+       (Max (..), Min (..), Option (..), option)
 import Distribution.Compiler                  (CompilerFlavor (..))
 import Distribution.Package                   (PackageName)
 import Distribution.PackageDescription        (GenericPackageDescription (..))
 import Distribution.PackageDescription.Parsec (readGenericPackageDescription)
-import Distribution.Pretty                    (prettyShow)
 import Distribution.System                    (OS (..))
 import Distribution.Types.Condition           (simplifyCondition)
 import Distribution.Types.CondTree
        (CondBranch (..), CondTree (..), mapTreeConstrs)
 import Distribution.Types.Dependency          (Dependency (..))
 import Distribution.Version
-       (Version, VersionRange, intersectVersionRanges, mkVersion,
-       orEarlierVersion, orLaterVersion, simplifyVersionRange, thisVersion,
-       unionVersionRanges, versionNumbers, withinRange)
-import System.Exit                            (ExitCode (..))
+       (intersectVersionRanges, mkVersion, orEarlierVersion, orLaterVersion,
+       simplifyVersionRange, thisVersion, unionVersionRanges, versionNumbers,
+       withinRange)
 import System.FilePath.Glob                   (compile, globDir1)
 import System.Path                            (Absolute, Path)
 
@@ -32,7 +29,7 @@ import qualified Data.List.NonEmpty              as NE
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
 import qualified Distribution.PackageDescription as PD
-import qualified System.Path as Path
+import qualified System.Path                     as Path
 
 import Trustee.GHC     hiding (index)
 import Trustee.Index
@@ -40,129 +37,12 @@ import Trustee.Monad
 import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
-import Trustee.Util
 
-cmdBounds :: GlobalOpts -> Path Absolute -> Bool -> Maybe Limit -> M ()
-cmdBounds opts dir verify (Just limit) = cmdBoundsLimit opts dir verify limit
-cmdBounds opts dir verify Nothing      = cmdBoundsSweep opts dir verify
+import Peura
+import Urakka
 
--------------------------------------------------------------------------------
--- Sweep
--------------------------------------------------------------------------------
-
-data SweepResult
-    = SweepResultNoPlan
-    | SweepResultOk      (NonEmpty Version)
-    | SweepResultDepFail (NonEmpty Version)
-    | SweepResultFail    (NonEmpty Version)
-  deriving Show
-
-instance Semigroup SweepResult where
-    x <> SweepResultNoPlan = x
-    SweepResultNoPlan <> y = y
-    SweepResultFail x <> SweepResultFail y = SweepResultFail (x <> y)
-    x@SweepResultFail {} <> _ = x
-    _ <> y@SweepResultFail {} = y
-    SweepResultDepFail x <> SweepResultDepFail y = SweepResultDepFail (x <> y)
-    x@SweepResultDepFail {} <> _ = x
-    _ <> y@SweepResultDepFail {} = y
-    SweepResultOk x <> SweepResultOk y = SweepResultOk (x <> y)
-
-instance Monoid SweepResult where
-    mempty = SweepResultNoPlan
-    mappend = (<>)
-
-makeSweepCell :: SweepResult -> Txt
-makeSweepCell r = case r of
-    SweepResultNoPlan     -> mkTxt Blue    "no-plan"
-    SweepResultOk vs      -> mkTxt Green   (displayVs vs)
-    SweepResultDepFail vs -> mkTxt Magenta (displayVs vs)
-    SweepResultFail vs    -> mkTxt Red     (displayVs vs)
-  where
-    displayVs vs
-      | length vs > 3 =
-            prettyShow (minimum vs) ++ " .. " ++ prettyShow (maximum vs)
-            ++ " (" ++ show (length vs) ++ ")"
-      | otherwise = intercalate ", " $ map prettyShow $ NE.toList vs
-
-
-cmdBoundsSweep :: GlobalOpts -> Path Absolute -> Bool -> M ()
-cmdBoundsSweep opts dir verify = do
-    let ghcs = ghcsInRange (goGhcVersions opts)
-    xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
-    case xs of
-        [cabalFile] -> do
-            index' <- liftIO $ fst <$> readIndex (goIndexState opts)
-            let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
-            gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
-            cols <- fmap Map.unions $ forConcurrently ghcs $ \ghcVersion -> do
-                cells <- sweepForGhc verify dir index gpd ghcVersion
-                return $ Map.mapKeysMonotonic ((,) ghcVersion) cells
-
-            putStrs [ renderTable $ makeTable makeSweepCell ghcs cols ]
-
-        _ -> fail "no .cabal file found"
-
-sweepForGhc
-    :: Bool
-    -> Path Absolute
-    -> Map.Map PackageName (Set.Set Version)
-    -> GenericPackageDescription
-    -> GHCVer
-    -> M (Map.Map PackageName SweepResult)
-sweepForGhc verify dir index gpd ghcVersion = do
-    let deps = allBuildDepends (toVersion ghcVersion) gpd
-    let deps' = Map.intersectionWith withinRange' index deps
-
-    -- putStrs $ map (uncurry formatDep) $ Map.toList deps'
-
-    fmap Map.fromList $ forConcurrently (Map.toList deps') $ \(pkgName, vs) ->
-        fmap ((,) pkgName) $ sweep pkgName vs
-  where
-    withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
-
-    -- formatDep :: PackageName -> [Version] -> String
-    -- formatDep pn vs = prettyShow pn <> " : " <> intercalate ", " (map prettyShow vs)
-
-    sweep :: PackageName -> [Version] -> M SweepResult
-    sweep pkgName vs = mconcat <$> forConcurrently majorVs (resultRange pkgName)
-      where
-        majorVs :: [NonEmpty Version]
-        majorVs = NE.groupBy ((==) `on` extractMajorVersion) vs
-
-    resultRange :: PackageName -> NonEmpty Version -> M SweepResult
-    resultRange pkgName r = do
-        (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
-            intersectVersionRanges (orLaterVersion $ minimum r) (orEarlierVersion $ maximum r)
-        case ec of
-            ExitFailure _ -> return SweepResultNoPlan
-            _             -> sconcat <$> forConcurrently r (result pkgName)
-
-    result :: PackageName -> Version -> M SweepResult
-    result pkgName v = runEarlyExit $ do
-        let cons' = Map.singleton pkgName (thisVersion v)
-        (ec0, _, _) <- lift $ runCabal ModeDry dir ghcVersion cons'
-        when (isFailure ec0) $ exit SweepResultNoPlan
-
-        unless verify $ exit $ SweepResultOk $ pure v
-
-        (ec1, _, _) <- lift $ runCabal ModeDep dir ghcVersion cons'
-        when (isFailure ec1) $ exit $ SweepResultDepFail $ pure v
-
-        (ec2, _, _) <- lift $ runCabal ModeBuild dir ghcVersion cons'
-        when (isFailure ec2) $ exit $ SweepResultFail $ pure v
-
-        return $ SweepResultOk $ pure v
-
-    isFailure (ExitFailure _) = True
-    isFailure ExitSuccess     = False
-
--------------------------------------------------------------------------------
--- Limit
--------------------------------------------------------------------------------
-
-cmdBoundsLimit :: GlobalOpts -> Path Absolute -> Bool -> Limit -> M ()
-cmdBoundsLimit opts dir verify limit = do
+cmdBounds :: GlobalOpts -> Path Absolute -> Verify -> Limit -> M (Urakka () ())
+cmdBounds opts dir verify limit = do
     let ghcs = ghcsInRange (goGhcVersions opts)
     xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
 
@@ -171,11 +51,14 @@ cmdBoundsLimit opts dir verify limit = do
             index' <- liftIO $ fst <$> readIndex (goIndexState opts)
             let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
             gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
-            cols <- fmap Map.unions $ forConcurrently ghcs $ \ghcVersion -> do
+            cols <- for ghcs $ \ghcVersion -> do
                 cells <- boundsForGhc verify limit dir index gpd ghcVersion
-                return $ Map.mapKeysMonotonic ((,) ghcVersion) cells
+                return $ Map.mapKeys ((,) ghcVersion) <$> cells
 
-            putStrs [ renderTable $ makeTable makeCell ghcs cols ]
+            output <- urakka (Map.unions <$> sequenceA cols) $ \cols' ->
+                putStrs [ renderTable $ makeTable makeCell ghcs cols' ]
+
+            return output
 
         _ -> fail "no .cabal file found"
 
@@ -185,7 +68,9 @@ data Result
     | ResultNoPlan
     | ResultDepFail !Version
     | ResultFail    !Version
-  deriving Show
+  deriving (Show, Generic)
+
+instance NFData Result
 
 makeCell ::  Result -> Txt
 makeCell (ResultOk v)      = mkTxt Green   $ prettyShow v
@@ -194,26 +79,31 @@ makeCell ResultNoPlan      = mkTxt Blue    "no-plan"
 makeCell (ResultDepFail v) = mkTxt Magenta $ prettyShow v
 makeCell (ResultFail v)    = mkTxt Red     $ prettyShow v
 
+fmap2 :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
+fmap2 f = fmap (fmap f)
+
 boundsForGhc
-    :: Bool
+    :: Verify
     -> Limit
     -> Path Absolute
     -> Map.Map PackageName (Set.Set Version)
     -> GenericPackageDescription
     -> GHCVer
-    -> M (Map.Map PackageName Result)
+    -> M (Urakka () (Map.Map PackageName Result))
 boundsForGhc verify limit dir index gpd ghcVersion = do
     let deps = allBuildDepends (toVersion ghcVersion) gpd
     let deps' = Map.intersectionWith withinRange' index deps
 
-    fmap Map.fromList $ forConcurrently (Map.toList deps') $ \(pkgName, vs) ->
-        fmap ((,) pkgName) $ findLowest pkgName $ case limit of
+    ress <- for (Map.toList deps') $ \(pkgName, vs) ->
+        fmap2 ((,) pkgName) $ findLowest pkgName $ case limit of
             LimitLower -> vs
             LimitUpper -> reverse vs
+
+    return $ Map.fromList <$> sequenceA ress
   where
     withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
 
-    findLowest :: PackageName -> [Version] -> M Result
+    findLowest :: PackageName -> [Version] -> M (Urakka () Result)
     findLowest pkgName vs = divideRanges majorVs
       where
         u = listToMaybe vs
@@ -221,33 +111,65 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
         majorVs :: [NonEmpty Version]
         majorVs = NE.groupBy ((==) `on` extractMajorVersion) vs
 
-        linear :: [Version] -> M Result
-        linear [] = return ResultNoPlan
+        linear :: [Version] -> M (Urakka () Result)
+        linear [] = return (pure ResultNoPlan)
         linear (v:vs') = do
-            (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName (thisVersion v)
-            case ec of
-                ExitSuccess   -> doVerify pkgName u v
-                ExitFailure _ -> linear vs'
+            let constraints = Map.singleton pkgName (thisVersion v)
 
-        linearRanges :: [NonEmpty Version] -> M Result
-        linearRanges [] = return ResultNoPlan
+            uDry <- urakka' $ \() -> do
+                (ec, _, _) <- runCabal ModeDry dir ghcVersion constraints
+                return $ case ec of
+                    ExitSuccess   -> Right (resultOk u v)
+                    ExitFailure _ -> Left ()
+
+            -- uAll :: Urakka () (Either () Result)
+            -- -- ^ either continue, or stop here with result
+            uAll <- case verify of
+                Verify ->  do
+                    uDep <- urakka' $ \res -> do
+                        (ec, _, _) <- runCabal ModeDep dir ghcVersion constraints
+                        if isFailure ec
+                        then return $ Left (ResultDepFail v)
+                        else return $ Right res
+
+                    uBld <- urakka' $ \res -> do
+                        (ec, _, _) <- runCabal ModeBuild dir ghcVersion constraints
+                        if isFailure ec
+                        then return $ ResultFail v
+                        else return res
+
+                    return $ uDry >>> returnA +++ (uDep >>> returnA ||| uBld)
+
+                SolveOnly -> return uDry
+
+            rest <- linear vs'
+            return $ uAll >>> rest ||| returnA
+
+        linearRanges :: [NonEmpty Version] -> M (Urakka () Result)
+        linearRanges [] = return (pure ResultNoPlan)
         linearRanges [r] = linear (NE.toList r)
         linearRanges (r:rs) = do
-            (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
-                intersectVersionRanges (orLaterVersion $ minimum r) (orEarlierVersion $ maximum r)
-            case ec of
-                ExitSuccess   -> linear (NE.toList r)
-                ExitFailure _ -> linearRanges rs
+            inR <- urakka (pure ()) $ \() -> do
+                (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
+                    intersectVersionRanges (orLaterVersion $ minimum r) (orEarlierVersion $ maximum r)
+                return $ case ec of
+                    ExitSuccess   -> True
+                    ExitFailure _ -> False
 
-        divideRanges :: [NonEmpty Version] -> M Result
+            if_ inR <$> linear (NE.toList r) <*> linearRanges rs
+
+        divideRanges :: [NonEmpty Version] -> M (Urakka () Result)
         divideRanges us
             | length us < 5 = linearRanges us
             | otherwise = do
-                (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
-                    intersectVersionRanges (orLaterVersion $ minimum2 vsl) (orEarlierVersion $ maximum2 vsl)
-                case ec of
-                    ExitSuccess   -> divideRanges vsl
-                    ExitFailure _ -> divideRanges vsr
+                inLeft <- urakka (pure ()) $ \() -> do
+                    (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
+                        intersectVersionRanges (orLaterVersion $ minimum2 vsl) (orEarlierVersion $ maximum2 vsl)
+                    return $ case ec of
+                        ExitSuccess   -> True
+                        ExitFailure _ -> False
+
+                if_ inLeft <$> divideRanges vsl <*> divideRanges vsr
           where
             (vsl, vsr) = splitAt (length us `div` 2) us
 
@@ -259,17 +181,6 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
     resultOk (Just u) v
         | take 2 (versionNumbers u) == take 2 (versionNumbers v) = ResultOk v
         | otherwise = ResultAlmost v
-
-    doVerify :: PackageName -> Maybe Version -> Version -> M Result
-    doVerify pkgName u v | not verify = return $ resultOk u v
-        | otherwise = runEarlyExit $ do
-            (ec, _, _) <- lift $ runCabal ModeDep dir ghcVersion $ Map.singleton pkgName (thisVersion v)
-            when (isFailure ec) $ exit $ ResultDepFail v
-
-            (ec', _, _) <- lift $ runCabal ModeBuild dir ghcVersion $ Map.singleton pkgName (thisVersion v)
-            when (isFailure ec') $ exit $ ResultFail v
-
-            return $ resultOk u v
 
 -------------------------------------------------------------------------------
 -- Helpers

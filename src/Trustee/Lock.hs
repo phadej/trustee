@@ -2,8 +2,7 @@
 module Trustee.Lock (withLock) where
 
 import Control.Concurrent     (threadDelay)
-import Control.Exception      (bracket, handle)
-import Control.Monad          (when)
+import Control.Exception      (IOException)
 import Data.Function          ((&))
 import Lukko
        (LockMode (ExclusiveLock), fdClose, fdOpen, fdTryLock, fdUnlock)
@@ -19,6 +18,9 @@ import System.Posix.Process   (getProcessID)
 import System.Posix.Types     (CPid (..))
 import System.Process         (readProcessWithExitCode)
 import Text.Read              (readMaybe)
+
+import Peura hiding (createDirectoryIfMissing, (</>))
+import Prelude (writeFile, readFile)
 
 withLock :: IO a -> IO a
 withLock action = do
@@ -37,7 +39,7 @@ withLock action = do
         bracket (fdOpen lockFile) close $
             loop (0 :: Integer) region lockFile pidFile
   where
-    doNothing :: IOError -> IO String
+    doNothing :: IOException -> IO String
     doNothing _ = return ""
 
     divides :: Integral a => a -> a -> Bool

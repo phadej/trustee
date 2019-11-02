@@ -1,0 +1,5 @@
+branches: master
+osx: 8.4.4
+
+constraint-set no-ofd
+  constraints: lukko -ofd-locking
