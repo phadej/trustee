@@ -4,6 +4,8 @@ import Data.List (intercalate)
 
 import Trustee.Txt
 
+import Peura
+
 -- | Render list of rows
 renderTable :: [[Txt]] -> String
 renderTable xss = unlines $ map row xss

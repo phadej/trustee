@@ -1,67 +1,49 @@
 module Trustee.Matrix (cmdMatrix) where
 
-import Data.Char                    (isDigit)
-import Data.Function                (on)
-import Data.Functor.Classes         (liftCompare)
-import Data.List                    (sortBy)
-import Data.Maybe                   (mapMaybe)
-import Data.Semigroup               ((<>))
-import Distribution.Text            (display)
-import System.Path                  (Absolute, Path)
-import Text.ParserCombinators.ReadP (many, munch1, (+++))
+import Data.Function (on)
 
-import qualified System.Path as Path
+import Distribution.Types.PkgconfigVersion (rpmvercmp)
 
 import Trustee.GHC
+import Trustee.CabalBuild
 import Trustee.Monad
-import Trustee.NewBuild (Result (..), matrixRow')
 import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
-import Trustee.Util
 
-cmdMatrix :: GlobalOpts -> Bool -> [Path Absolute] -> M ()
-cmdMatrix opts test dirs' = do
+import Peura
+import Urakka
+
+cmdMatrix :: GlobalOpts -> Verify -> [Path Absolute] -> M (Urakka () ())
+cmdMatrix opts verify dirs' = do
     let ghcs = reverse $ ghcsInRange (goGhcVersions opts)
-    xss <- forConcurrently dirs $ matrixRow' test ghcs mempty
+    xssU <- for dirs $ urakkaCabalRow verify ghcs mempty
 
-    putStrs [ renderTable $ makeTable ghcs xss ]
+    urakka (sequenceA xssU) $ \xss -> do
+        putStrs [ renderTable $ makeTable ghcs xss ]
 
-    -- TODO: some errors
-    putStrs $ take 2 $ mapMaybe isFail $ concat xss
+        -- TODO: some errors
+        putStrs $ take 2 $ mapMaybe isFail $ concat xss
   where
-    dirs = sortBy (liftCompare cmp `on` parts) dirs'
-    parts
-        = maybeReadP partsP
-        . Path.toFilePath . Path.takeDirectory
+    dirs = sortBy (flip rpmvercmp `on` toUTF8BS . toUnrootedFilePath . takeFileName) dirs'
 
-    partsP = many (fmap Left (munch1 (not . isDigit)) +++ fmap (Right . read) (munch1 isDigit))
-
-    cmp :: [Either String Int] -> [Either String Int] -> Ordering
-    cmp [] [] = EQ
-    cmp [] _  = LT
-    cmp _  [] = GT
-    cmp (Right n : xs) (Right m : ys) = compare m n <> cmp xs ys
-    cmp (Right _ : _)  (Left _  : _)  = LT
-    cmp (_       : _)  (Right _ : _)  = GT
-    cmp (Left s  : xs) (Left t  : ys) = compare s t <> cmp xs ys
-
-    makeTable :: [GHCVer] -> [[Result]] -> [[Txt]]
+    makeTable :: [GHCVer] -> [[CabalResult]] -> [[Txt]]
     makeTable ghcs xss
-        = (emptyTxt : map (mkTxt Black . display. toVersion) ghcs)
+        = (emptyTxt : map (mkTxt Black . prettyShow. toVersion) ghcs)
         : zipWith mkRow dirs xss
 
-    mkRow :: Path Absolute -> [Result] -> [Txt]
+    mkRow :: Path Absolute -> [CabalResult] -> [Txt]
     mkRow p xs
-        = mkTxt Black (Path.toFilePath $ Path.takeDirectory p)
+        = mkTxt Black (toUnrootedFilePath $ takeFileName p)
         : map mkCell xs
 
-    mkCell :: Result -> Txt
-    mkCell ResultOk         = mkTxt Green   "OK"
-    mkCell ResultTestFail   = mkTxt Yellow  "TEST"
-    mkCell ResultDryFail {} = mkTxt Blue    "NO-IP"
-    mkCell ResultDepFail {} = mkTxt Magenta "DEP"
-    mkCell ResultFail {}    = mkTxt Red     "FAIL"
+    mkCell :: CabalResult -> Txt
+    mkCell CabalResultOk         = mkTxt Green   "OK"
+    mkCell CabalResultDryFail {} = mkTxt Blue    "NO-IP"
+    mkCell CabalResultDepFail {} = mkTxt Magenta "DEP"
+    mkCell CabalResultFail {}    = mkTxt Red     "FAIL"
 
-    isFail (ResultFail _ o e) = Just (o ++ "\n" ++ e)
-    isFail _                  = Nothing
+    -- mkCell CabalResultTestFail   = mkTxt Yellow  "TEST"
+
+    isFail (CabalResultFail _ o e) = Just (fromUTF8BS o ++ "\n" ++ fromUTF8BS e)
+    isFail _                       = Nothing

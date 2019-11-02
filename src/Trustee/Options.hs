@@ -5,20 +5,20 @@ module Trustee.Options (
     goIndexState,
     PlanParams (..),
     Limit (..),
+    Verify (..),
     parseOpts,
     ) where
 
 import Control.Applicative           (many, optional, (<**>), (<|>))
-import Data.Map                      (Map)
 import Data.Time                     (UTCTime, defaultTimeLocale, parseTimeM)
-import Distribution.Package          (PackageName)
 import Distribution.Text             (simpleParse)
 import Distribution.Types.Dependency (Dependency (..))
-import Distribution.Version          (VersionRange, anyVersion)
-import System.Path                   (FsPath, fromFilePath)
+import Distribution.Version          (anyVersion)
 
 import qualified Data.Map            as Map
 import qualified Options.Applicative as O
+
+import Peura
 
 data IncludeDeprecated = IncludeDeprecated | OmitDeprecated
   deriving Show
@@ -42,11 +42,14 @@ data PlanParams = PlanParams
   deriving Show
 
 data Cmd
-    = CmdNewBuild [String]
-    | CmdMatrix Bool [FsPath]
-    | CmdMatrix2 Bool [FsPath]
+    = CmdMatrix Verify [FsPath]
+    -- | CmdNewBuild [String]
     | CmdGet PackageName VersionRange
-    | CmdBounds Bool (Maybe Limit)
+    | CmdBounds Verify Limit
+    | CmdSweep Verify
+
+data Verify = Verify | SolveOnly
+  deriving Show
 
 data Limit = LimitUpper | LimitLower
   deriving Show
@@ -123,39 +126,31 @@ globalOpts = mkGlobalOpts
 
 cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
-    [ O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
-    , O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
-    , O.command "matrix2" $ O.info cmdMatrix2 $ O.progDesc "Build matrix"
-    , O.command "get" $ O.info cmdGet $ O.progDesc "Fetch package sources"
+    [ O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
     , O.command "bounds" $ O.info cmdBounds $ O.progDesc "Find and check bounds"
+    , O.command "get" $ O.info cmdGet $ O.progDesc "Fetch package sources"
+    -- , O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
     ]
 
 cmdBounds :: O.Parser Cmd
 cmdBounds = CmdBounds
-    <$> switch
-        [ O.help "verify plans"
-        , O.long "verify"
-        ]
+    <$> verify
     <*> limit
     <**> O.helper
   where
-    limit = lower <|> upper <|> sweep
+    limit = lower <|> upper <|> pure LimitLower
 
-    lower = O.flag' (Just LimitLower) $ mconcat
+    lower = O.flag' LimitLower $ mconcat
         [ O.long "lower"
         , O.help "Lower bounds"
         ]
 
-    upper = O.flag' (Just LimitUpper) $ mconcat
+    upper = O.flag' LimitUpper $ mconcat
         [ O.long "upper"
         , O.help "Upper bounds"
         ]
 
-    sweep = O.flag' Nothing $ mconcat
-        [ O.long "sweep"
-        , O.help "Sweep bounds (expensive)"
-        ]
-
+{-
 cmdNewBuild :: O.Parser Cmd
 cmdNewBuild = CmdNewBuild
     <$> many (O.strArgument $ mconcat
@@ -163,27 +158,11 @@ cmdNewBuild = CmdNewBuild
         , O.help "arguments to cabal new-build"
         ])
     <**> O.helper
+-}
 
 cmdMatrix :: O.Parser Cmd
 cmdMatrix = CmdMatrix
-    <$> switch
-        [ O.help "Run tests also"
-        , O.long "test"
-        ]
-    <*> many pkgs
-    <**> O.helper
-  where
-    pkgs = O.argument (O.maybeReader $ Just . fromFilePath) $ mconcat
-        [ O.metavar "pkg-dir"
-        , O.help "package directories to include in matrix"
-        ]
-
-cmdMatrix2 :: O.Parser Cmd
-cmdMatrix2 = CmdMatrix2
-    <$> switch
-        [ O.help "Run tests also"
-        , O.long "test"
-        ]
+    <$> verify
     <*> many pkgs
     <**> O.helper
   where
@@ -208,8 +187,18 @@ cmdGet = CmdGet
         , O.help "Version range"
         ]
 
-switch :: [O.Mod O.FlagFields Bool] -> O.Parser Bool
-switch = O.switch . mconcat
+verify :: O.Parser Verify
+verify = verify' <|> solveOnly <|> pure Verify
+  where
+    verify' = O.flag' Verify $ mconcat
+        [ O.long "verify"
+        , O.help "Try to build too"
+        ]
+
+    solveOnly = O.flag' SolveOnly $ mconcat
+        [ O.long "solve-only"
+        , O.help "Only solve"
+        ]
 
 mkConstraintMap :: [Dependency] -> Map PackageName VersionRange
 mkConstraintMap = Map.fromList . map toPair where

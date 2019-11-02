@@ -11,13 +11,7 @@ steps:
   - trailing_whitespace: {}
 columns: 80
 language_extensions:
-  - DeriveAnyClass
-  - DerivingStrategies
-  - DerivingVia
+  - EmptyCase
   - ExplicitForAll
   - FlexibleContexts
-  - GeneralizedNewtypeDeriving
   - MultiParamTypeClasses
-  - MultiWayIf
-  - TypeApplications
-  - TypeFamilies

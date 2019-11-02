@@ -1,11 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Trustee.Get where
 
-import Control.Monad        (when)
-import Data.Foldable        (for_)
-import Distribution.Package (PackageName)
-import Distribution.Text    (display)
-import Distribution.Version (VersionRange, withinRange)
+import Distribution.Version (withinRange)
 import System.Directory     (doesDirectoryExist)
 import System.FilePath      ((</>))
 
@@ -16,13 +12,16 @@ import qualified System.Process  as Process
 import Trustee.Index
 import Trustee.Options
 
-cmdGet :: GlobalOpts -> PackageName -> VersionRange -> IO ()
-cmdGet opts pkgname vr = do
+import Peura   hiding ((</>))
+import Prelude (putStrLn)
+
+cmdGet :: GlobalOpts -> PackageName -> VersionRange -> Peu r ()
+cmdGet opts pkgname vr = liftIO $ do
     index <- fst <$> readIndex Nothing
     for_ (Map.lookup pkgname index) $ \iv ->
         for_ (indexValueVersions (goIncludeDeprecated opts) iv) $ \v ->
             when (v `withinRange` vr) $ do
-                let dirname = display pkgname ++ "-" ++ display v
+                let dirname = prettyShow pkgname ++ "-" ++ prettyShow v
                 exists <- doesDirectoryExist dirname
                 if exists
                 then putStrLn $ dirname ++ " exists"

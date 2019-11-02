@@ -1,12 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Trustee.Config where
 
-import Control.Exception (handle)
+import Control.Exception (IOException)
 import Data.Aeson.Compat (FromJSON (..), decode, withObject, (.!=), (.:?))
-import System.Directory  (XdgDirectory (..), getXdgDirectory)
-import System.FilePath   ((</>))
-
-import qualified Data.ByteString.Lazy as LBS
+import Peura
 
 data Config = Config
     { cfgThreads   :: !Int
@@ -28,12 +25,13 @@ defaultConfig = Config
     , cfgGhcJobs   = 1
     }
 
-readConfig :: IO Config
+readConfig :: Peu r Config
 readConfig = handle withDefaultConfig $ do
-    cfgDir <- getXdgDirectory XdgConfig "trustee"
-    let cfgFile = cfgDir </> "config"
-    contents <- LBS.readFile cfgFile
+    let cfgFile' :: Path XdgConfig
+        cfgFile' = root </> fromUnrootedFilePath "trustee" </> fromUnrootedFilePath "config"
+    cfgFile <- makeAbsolute (FsPath cfgFile')
+    contents <- readLazyByteString cfgFile
     decode contents
   where
-    withDefaultConfig :: IOError -> IO Config
+    withDefaultConfig :: IOException -> Peu r Config
     withDefaultConfig _ = return defaultConfig

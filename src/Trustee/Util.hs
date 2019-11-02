@@ -13,6 +13,8 @@ import Data.Char                    (isSpace)
 import Data.Maybe                   (listToMaybe)
 import Text.ParserCombinators.ReadP (ReadP, readP_to_S)
 
+import Peura
+
 runEarlyExit :: Functor m => ExceptT a m a -> m a
 runEarlyExit = fmap (either id id) . runExceptT
 
