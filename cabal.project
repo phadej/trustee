@@ -4,4 +4,14 @@ with-compiler: ghc-8.4.4
 source-repository-package
   type: git
   location: https://github.com/phadej/lukko.git
-  tag: 718f02e93fb97f596afd44027424bba2eed7b56f
+  tag: a4fd27108e36afd35c0e54712f6f3d2dfe7b326c
+
+source-repository-package
+  type: git
+  location: https://github.com/phadej/urakka.git
+  tag: 1682aee970a446fc6af30b155d316f91d8e1d902
+
+source-repository-package
+  type: git
+  location: https://github.com/phadej/regression-simple.git
+  tag: 09346dc9f135fb8fc1ce73e253ad55c9ea5f041f
