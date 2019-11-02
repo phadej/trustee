@@ -18,8 +18,7 @@ main = do
     let pp = goPlanParams opts
     cfg <- readConfig
     case cmd of
-        CmdBounds verify l -> runM cfg pp $ cmdBounds opts cwd verify l
-        CmdNewBuild args   -> runM cfg pp $ cmdNewBuild opts cwd args
+        CmdBounds verify l -> runUrakkaM cfg pp $ cmdBounds opts cwd verify l
         CmdGet pkgname vr  -> cmdGet opts pkgname vr
         CmdMatrix test dirs -> do
             dirs' <- traverse Path.makeAbsolute dirs

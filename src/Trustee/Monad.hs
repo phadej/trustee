@@ -219,6 +219,7 @@ runM cfg pp m = withLock $ withConsoleRegion Linear $ \region -> do
 runUrakkaM :: Config -> PlanParams -> M (Urakka () a) -> IO a
 runUrakkaM cfg pp actionU = runM cfg pp $ do
     u <- actionU
+    -- liftIO $ outputConcurrent "Urakka constructed"
     withRunInIO $ \_runInIO -> withConsoleRegion Linear $ \region -> do
         estimator <- mkEstimator
 
@@ -241,7 +242,7 @@ runUrakkaM cfg pp actionU = runM cfg pp $ do
                 let eta = fmap (\dur' -> utcToLocalTime tz $ addUTCTime (realToFrac dur') startUtcTime) dur
 
                 return $ unwords
-                    [ "urakka: "
+                    [ "trustee "
                     , show d
                     , "/"
                     , show (max mi q)
