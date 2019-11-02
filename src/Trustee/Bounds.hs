@@ -5,10 +5,9 @@ import Algebra.Lattice
        (BoundedMeetSemiLattice (top), Lattice (..), meets)
 import Control.Arrow                          (returnA, (+++), (>>>), (|||))
 import Data.Function                          (on)
-import Data.List                              (splitAt)
 import Data.Maybe                             (listToMaybe)
-import Data.Semigroup
-       (Max (..), Min (..), Option (..), option)
+import Data.Semigroup                         (Max (..), Min (..))
+import Data.Semigroup.Foldable                (Foldable1 (..))
 import Distribution.Compiler                  (CompilerFlavor (..))
 import Distribution.Package                   (PackageName)
 import Distribution.PackageDescription        (GenericPackageDescription (..))
@@ -159,9 +158,9 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
             if_ inR <$> linear (NE.toList r) <*> linearRanges rs
 
         divideRanges :: [NonEmpty Version] -> M (Urakka () Result)
-        divideRanges us
-            | length us < 5 = linearRanges us
-            | otherwise = do
+        divideRanges us = case take3 us of
+            Left us'         -> linearRanges us'
+            Right (vsl, vsr) -> do
                 inLeft <- urakka (pure ()) $ \() -> do
                     (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
                         intersectVersionRanges (orLaterVersion $ minimum2 vsl) (orEarlierVersion $ maximum2 vsl)
@@ -169,9 +168,7 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
                         ExitSuccess   -> True
                         ExitFailure _ -> False
 
-                if_ inLeft <$> divideRanges vsl <*> divideRanges vsr
-          where
-            (vsl, vsr) = splitAt (length us `div` 2) us
+                if_ inLeft <$> divideRanges (toList vsl) <*> divideRanges vsr
 
     isFailure (ExitFailure _) = True
     isFailure ExitSuccess     = False
@@ -181,6 +178,10 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
     resultOk (Just u) v
         | take 2 (versionNumbers u) == take 2 (versionNumbers v) = ResultOk v
         | otherwise = ResultAlmost v
+
+take3 :: [a] -> Either [a] (NonEmpty a, [a])
+take3 (a:b:c:d:es) = Right (a :| [b,c,d], es)
+take3 xs           = Left xs
 
 -------------------------------------------------------------------------------
 -- Helpers
@@ -251,15 +252,11 @@ extractMajorVersion v = case versionNumbers v of
     [_,_]       -> v
     (x : y : _) -> mkVersion [x, y]
 
-minimum2 :: (Foldable t, Foldable s, Ord a) => t (s a) -> a
-minimum2
-    = option (error "minimum2: empty case") getMin
-    . (foldMap . foldMap) (Option . Just . Min)
+minimum2 :: (Foldable1 t, Foldable1 s, Ord a) => t (s a) -> a
+minimum2 = getMin . foldMap1 (foldMap1 Min)
 
-maximum2 :: (Foldable t, Foldable s, Ord a) => t (s a) -> a
-maximum2
-    = option (error "maximum2: empty case") getMax
-    . (foldMap . foldMap) (Option . Just . Max)
+maximum2 :: (Foldable1 t, Foldable1 s, Ord a) => t (s a) -> a
+maximum2 = getMax . foldMap1 (foldMap1 Max)
 
 -------------------------------------------------------------------------------
 -- Table

@@ -87,15 +87,6 @@
 
   # Certain modules are banned entirely
 
-  # Use Data.Bifunctor (first)
-  - name: Control.Arrow
-    within: 
-    - Data.HashSet.InsOrd
-    - Data.HashMap.Strict.InsOrd
-    - Data.Vec.DataFamily.SpineStrict.Pigeonhole # TODO
-    - FileEmbedLzma
-    - Text.Regex.Applicative.Text
-
 - functions:
   # unsafePerformIO can only appear in selected modules
   - name: unsafePerformIO

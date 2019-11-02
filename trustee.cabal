@@ -36,7 +36,11 @@ library
     Trustee.Txt
     Trustee.Util
 
-  exposed-modules:    Urakka.Estimation
+  -- independent extras
+  exposed-modules:
+    Urakka.Estimation
+    VendingMachine
+
   build-depends:
     , peura
     , regression-simple
@@ -61,6 +65,7 @@ library
     , directory             ^>=1.3.0.2
     , exceptions            ^>=0.10
     , filepath              ^>=1.4.1.2
+    , free                  ^>=5.1.2
     , Glob                  ^>=0.10
     , lattices              ^>=2
     , lukko                 ^>=0.1
@@ -70,6 +75,7 @@ library
     , process               ^>=1.6.1.0
     , process-extras        ^>=0.7.4
     , selective             ^>=0.3
+    , semigroupoids         ^>=5.3.3
     , stm                   ^>=2.4.4.1 || ^>=2.5.0.0
     , tar                   ^>=0.5.0.3
     , tdigest               ^>=0.2
@@ -103,5 +109,5 @@ executable trustee
     , trustee
 
   hs-source-dirs:   src-exe
-  ghc-options:      -Wall -threaded -rtsopts
+  ghc-options:      -Wall -threaded -rtsopts -with-rtsopts=-N4
   default-language: Haskell2010
