@@ -32,6 +32,9 @@ module Peura.Exports (
     Text,
     Version,
     VersionRange,
+    -- * Exceptions
+    IOException,
+    SomeException,
     -- * Individual functions
     -- * Control.DeepSeq
     force,
@@ -71,9 +74,6 @@ module Peura.Exports (
     at,
     -- * Lens operators
     (^?),
-    -- * Developing
-    error,
-    undefined,
     ) where
 
 -- to get all members of Foldable
@@ -92,6 +92,7 @@ import Prelude       as A
 import Codec.Serialise                 (Serialise)
 import Control.Applicative             (Alternative (..))
 import Control.DeepSeq                 (NFData (..), force)
+import Control.Exception               (IOException, SomeException)
 import Control.Lens                    (at, ifor, ifor_, ix, (^?))
 import Control.Monad                   (ap, foldM, unless, when, (<$!>))
 import Control.Monad.Catch
@@ -124,14 +125,4 @@ import Data.Generics.Labels ()
 
 import qualified Data.ByteString.Lazy as LBS
 
-import qualified Prelude
-
 type LazyByteString = LBS.ByteString
-
-undefined :: a
-undefined = Prelude.undefined
-{-# DEPRECATED undefined "Don't leave me in the code" #-}
-
-error :: String -> a
-error = Prelude.error
-{-# DEPRECATED error "Don't leave me in the code" #-}

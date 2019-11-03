@@ -25,6 +25,7 @@ library
   -- cabal-fmt: expand src -Peura
   exposed-modules:
     Peura.ByteString
+    Peura.Debug
     Peura.Exports
     Peura.Monad
     Peura.Orphans

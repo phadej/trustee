@@ -9,6 +9,7 @@ module Peura (
     ) where
 
 import Peura.ByteString as A
+import Peura.Debug      as A
 import Peura.Exports    as A
 import Peura.Monad      as A
 import Peura.Paths      as A
