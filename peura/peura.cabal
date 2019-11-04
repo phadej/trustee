@@ -52,15 +52,16 @@ library
 
   -- Extra dependencies
   build-depends:
-    , ansi-terminal   ^>=0.10.1
-    , clock           ^>=0.8
-    , exceptions      ^>=0.10.3
-    , generic-lens    ^>=1.2.0.0
-    , lens            ^>=4.18.1
-    , paths           ^>=0.2.0.0
-    , process-extras  ^>=0.7.4
-    , serialise       ^>=0.2.1.0
-    , unliftio-core   ^>=0.1.2.0
+    , ansi-terminal      ^>=0.10.1
+    , clock              ^>=0.8
+    , concurrent-output  ^>=1.10.11
+    , exceptions         ^>=0.10.3
+    , generic-lens       ^>=1.2.0.0
+    , lens               ^>=4.18.1
+    , paths              ^>=0.2.0.0
+    , process-extras     ^>=0.7.4
+    , serialise          ^>=0.2.1.0
+    , unliftio-core      ^>=0.1.2.0
 
   default-extensions:
     NoImplicitPrelude

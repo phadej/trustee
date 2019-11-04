@@ -33,6 +33,7 @@ module Peura.Exports (
     Version,
     VersionRange,
     -- * Exceptions
+    Exception,
     IOException,
     SomeException,
     -- * Individual functions
@@ -68,6 +69,8 @@ module Peura.Exports (
     -- ** UTF8
     fromUTF8BS, toUTF8BS,
     -- * Helpers from lens
+    itraverse,
+    itraverse_,
     ifor,
     ifor_,
     ix,
@@ -92,8 +95,9 @@ import Prelude       as A
 import Codec.Serialise                 (Serialise)
 import Control.Applicative             (Alternative (..))
 import Control.DeepSeq                 (NFData (..), force)
-import Control.Exception               (IOException, SomeException)
-import Control.Lens                    (at, ifor, ifor_, ix, (^?))
+import Control.Exception               (Exception, IOException, SomeException)
+import Control.Lens
+       (at, ifor, ifor_, itraverse, itraverse_, ix, (^?))
 import Control.Monad                   (ap, foldM, unless, when, (<$!>))
 import Control.Monad.Catch
        (MonadCatch (..), MonadMask (..), MonadThrow (..), bracket, handle)

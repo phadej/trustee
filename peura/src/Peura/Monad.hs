@@ -2,6 +2,9 @@
 module Peura.Monad (
     Peu (..),
     runPeu,
+    -- * Output
+    withSetSgrCode,
+    output,
     -- * Diagnostics
     putDebug,
     putInfo,
@@ -19,6 +22,7 @@ module Peura.Monad (
     exitFailure,
     ) where
 
+import System.Console.Concurrent (withConcurrentOutput, errorConcurrent, outputConcurrent)
 import Control.Monad.IO.Class    (MonadIO (..))
 import Control.Monad.Reader.Class (MonadReader (..))
 import Peura.Exports
@@ -43,7 +47,7 @@ newtype Peu r a = Peu { unPeu :: Env r -> IO a }
   deriving stock Functor
 
 runPeu :: forall a r. r -> Peu r a -> IO a
-runPeu r m = do
+runPeu r m = withConcurrentOutput $ do
     supportsAnsi <- ANSI.hSupportsANSI stderr
     now <- getTime Monotonic
 
@@ -104,6 +108,19 @@ instance MonadMask (Peu r) where
         (\resource -> unPeu (use resource) r)
 
 -------------------------------------------------------------------------------
+-- Output
+-------------------------------------------------------------------------------
+
+withSetSgrCode :: (([ANSI.SGR] -> String) -> Peu r a) -> Peu r a
+withSetSgrCode f = Peu $ \env -> unPeu (f (setSGRCode env)) env where
+    setSGRCode env
+        | envSupportsAnsi env = ANSI.setSGRCode
+        | otherwise           = const ""
+
+output :: String -> Peu r ()
+output = liftIO . outputConcurrent . (++ "\n")
+
+-------------------------------------------------------------------------------
 -- Configuration
 -------------------------------------------------------------------------------
 
@@ -114,8 +131,8 @@ class Warning w where
 -- Implementation details
 -------------------------------------------------------------------------------
 
-withSetSgrCode :: (String -> ([ANSI.SGR] -> String) -> IO a) -> Peu r a
-withSetSgrCode f = Peu $ \env -> do
+withTimeAndSetSgrCode :: (String -> ([ANSI.SGR] -> String) -> IO a) -> Peu r a
+withTimeAndSetSgrCode f = Peu $ \env -> do
     now <- getTime Monotonic
     let TimeSpec s ns = diffTimeSpec now (envStartClock env)
     let off = printf "[%10.5f] " (fromIntegral s + fromIntegral ns / 1e9 :: Double)
@@ -129,43 +146,45 @@ withSetSgrCode f = Peu $ \env -> do
 -------------------------------------------------------------------------------
 
 putDebug :: String -> Peu r ()
-putDebug msg = withSetSgrCode $ \t setSgr -> do
+putDebug msg = withTimeAndSetSgrCode $ \t setSgr -> do
     let sgr :: [ANSI.SGR]
         sgr =
             [ ANSI.SetConsoleIntensity ANSI.BoldIntensity
             , ANSI.SetColor ANSI.Foreground ANSI.Dull ANSI.Blue
             ]
-    hPutStrLn stderr $ concat
+    errorConcurrent $ concat
         [ t
         , setSgr sgr
         , "debug: "
         , setSgr []
         , msg
+        , "\n"
         ]
 
 putInfo :: String -> Peu r ()
-putInfo msg = withSetSgrCode $ \t setSgr -> do
+putInfo msg = withTimeAndSetSgrCode $ \t setSgr -> do
     let sgr :: [ANSI.SGR]
         sgr =
             [ ANSI.SetConsoleIntensity ANSI.BoldIntensity
             , ANSI.SetColor ANSI.Foreground ANSI.Dull ANSI.Green
             ]
-    hPutStrLn stderr $ concat
+    errorConcurrent $ concat
         [ t
         , setSgr sgr
         , "info: "
         , setSgr []
         , msg
+        , "\n"
         ]
 
 putWarning :: Warning w => w -> String -> Peu r ()
-putWarning  w msg = withSetSgrCode $ \t setSgr -> do
+putWarning  w msg = withTimeAndSetSgrCode $ \t setSgr -> do
     let sgr :: [ANSI.SGR]
         sgr =
             [ ANSI.SetConsoleIntensity ANSI.BoldIntensity
             , ANSI.SetColor ANSI.Foreground ANSI.Dull ANSI.Magenta
             ]
-    hPutStrLn stderr $ concat
+    errorConcurrent $ concat
         [ t
         , setSgr sgr
         , "warning"
@@ -177,21 +196,23 @@ putWarning  w msg = withSetSgrCode $ \t setSgr -> do
         , setSgr []
         , "]: "
         , msg
+        , "\n"
         ]
 
 putError :: String -> Peu r ()
-putError msg = withSetSgrCode $ \t setSgr -> do
+putError msg = withTimeAndSetSgrCode $ \t setSgr -> do
     let sgr :: [ANSI.SGR]
         sgr =
             [ ANSI.SetConsoleIntensity ANSI.BoldIntensity
             , ANSI.SetColor ANSI.Foreground ANSI.Dull ANSI.Red
             ]
-    hPutStrLn stderr $ concat
+    errorConcurrent $ concat
         [ t
         , setSgr sgr
         , "error:"
         , setSgr []
         , msg
+        , "\n"
         ]
 
 -------------------------------------------------------------------------------
