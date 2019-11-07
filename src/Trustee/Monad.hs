@@ -1,7 +1,11 @@
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+-- {-# OPTIONS_GHC -Werror #-}
 module Trustee.Monad (
     M,
     runM,
@@ -13,30 +17,30 @@ module Trustee.Monad (
     Mode' (..),
     -- * Internal
     runWithGHC,
-    jobs,
     ) where
 
-import Control.Concurrent.Async   (async, cancel, wait)
+import Control.Concurrent.Async  (async, cancel, wait)
 import Control.Concurrent.STM
-       (STM, TVar, atomically, modifyTVar', newTVar, readTVar, readTVarIO,
-       retry, writeTVar)
-import Control.Exception          (evaluate)
-import Data.List                  (isPrefixOf)
+       (STM, TVar, atomically, modifyTVar, modifyTVar', newTVarIO, readTVar,
+       readTVarIO, retry, writeTVar)
+import Control.Exception         (evaluate)
+import Data.List                 (isPrefixOf)
+import Data.Monoid               (Sum (..))
 import Data.Time
        (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime,
        getCurrentTimeZone, utcToLocalTime)
 import Distribution.Version
        (VersionRange, intersectVersionRanges, simplifyVersionRange)
-import Foreign.C.Types            (CClock (..))
+import Foreign.C.Types           (CClock (..))
 import System.Clock
        (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
-import System.Console.ANSI        (setTitle)
-import System.Console.Concurrent  (outputConcurrent)
+import System.Console.ANSI       (setTitle)
+import System.Console.Concurrent (outputConcurrent)
 import System.Console.Regions
        (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
-import System.Exit                (ExitCode (..))
-import System.Posix.Process       (ProcessTimes (..), getProcessTimes)
-import Text.Printf                (printf)
+import System.Exit               (ExitCode (..))
+import System.Posix.Process      (ProcessTimes (..), getProcessTimes)
+import Text.Printf               (printf)
 import Urakka
        (ConcSt, Urakka, overEstimate, runConcurrent', underEstimate,
        urakkaDone, urakkaOverEstimate, urakkaQueued)
@@ -62,7 +66,8 @@ import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
 
-import Peura hiding (evaluate)
+import Peura          hiding (evaluate)
+import VendingMachine
 
 type M = Peu Env
 
@@ -80,16 +85,22 @@ data GHCLock
     | GHCBuild !Int  -- ^ build,        shared (only reads store)
 
 data Env = Env
-    { envConfig      :: Config
-    , envPlanParams  :: PlanParams
-    , envThreads     :: TVar Int
-    , envGhcLocks    :: PerGHC (TVar (Maybe GHCLock))
-    , envClock       :: TVar TimeSpec
-    , envTimeStats   :: TVar (Stats' (TD.TDigest 25))
-    , envTimeSums    :: TVar (Stats' Double)
-    , envRunStats    :: TVar Stats
-    , envDoneStats   :: TVar Stats
+    { envConfig         :: Config
+    , envPlanParams     :: PlanParams
+    , envThreads        :: TVar Int
+    , envGhcLocks       :: PerGHC (TVar (Maybe GHCLock))
+    , envClock          :: TVar TimeSpec
+    , envTimeStats      :: TVar (Stats' (TD.TDigest 25))
+    , envTimeSums       :: TVar (Stats' Double)
+    , envRunStats       :: TVar Stats
+    , envDoneStats      :: TVar Stats
+    , envVendingMachine :: VendingMachine L
     }
+
+data L a where
+    LDry :: L ()
+    LDep :: GHCVer -> L ()
+    LBld :: GHCVer -> L ()
 
 envCabalJobs :: Env -> Int
 envCabalJobs = cfgCabalJobs . envConfig
@@ -97,32 +108,102 @@ envCabalJobs = cfgCabalJobs . envConfig
 envGhcJobs :: Env -> Int
 envGhcJobs = cfgGhcJobs . envConfig
 
-newEnv :: Config -> PlanParams -> TimeSpec -> IO Env
-newEnv cfg pp ts = atomically $ Env cfg pp
-    <$> newTVar (cfgThreads cfg)
-    <*> sequence (pure (newTVar Nothing))
-    <*> newTVar ts
-    <*> newTVar (Stats mempty mempty mempty)
-    <*> newTVar (Stats 0 0 0)
-    <*> newTVar (Stats 0 0 0)
-    <*> newTVar (Stats 0 0 0)
+newEnv :: Config -> PlanParams -> TimeSpec -> IO (Env, IO ())
+newEnv cfg pp ts = do
+    let envConfig     = cfg
+        envPlanParams = pp
+
+    envThreads   <- newTVarIO (cfgThreads cfg)
+    envGhcLocks  <- sequence (pure (newTVarIO Nothing))
+    envClock     <- newTVarIO ts
+    envTimeStats <- newTVarIO (Stats mempty mempty mempty)
+    envTimeSums  <- newTVarIO (Stats 0 0 0)
+    envRunStats  <- newTVarIO (Stats 0 0 0)
+    envDoneStats <- newTVarIO (Stats 0 0 0)
+
+    -- we prefer to build dependencies early, then build packages, and then solve.
+    let price :: L a -> Sum Int
+        price (LDep _) = 0
+        price (LBld _) = 1
+        price LDry     = 2
+
+    let supply :: L a -> STM (a, STM ())
+        supply LDry = do
+            let threads = 1
+            n <- readTVar envThreads
+            unless (n >= threads) retry
+            writeTVar envThreads $ n - threads
+
+            return ((), modifyTVar envThreads (+ threads))
+
+        supply (LDep gv) = do
+            let threads = cfgCabalJobs envConfig
+            let ghcLock = index envGhcLocks gv
+
+            n <- readTVar envThreads
+            -- start dep if there's one slot, i.e. over-provision
+            unless (n >= 1) retry
+            writeTVar envThreads $ n - threads
+
+            b <- readTVar ghcLock
+            case b of
+                Nothing       -> writeTVar ghcLock (Just GHCStore)
+                Just _        -> retry
+
+            let release :: STM ()
+                release = do
+                    modifyTVar envThreads (+ threads)
+                    modifyTVar ghcLock $ \case
+                        Just GHCStore -> Nothing
+                        x             -> x
+
+            return ((), release)
+
+        supply (LBld gv) = do
+            let threads = cfgGhcJobs envConfig
+            let ghcLock = index envGhcLocks gv
+
+            n <- readTVar envThreads
+            unless (n >= threads) retry
+            writeTVar envThreads $ n - threads
+
+            b <- readTVar ghcLock
+            case b of
+                Nothing           -> writeTVar ghcLock (Just (GHCBuild 0))
+                Just (GHCBuild m) -> writeTVar ghcLock (Just (GHCBuild (succ m)))
+                Just _            -> retry
+
+            let release :: STM ()
+                release = do
+                    modifyTVar envThreads (+ threads)
+                    modifyTVar ghcLock $ \case
+                        Just (GHCBuild m)
+                            | m <= 0    -> Nothing
+                            | otherwise -> Just (GHCBuild (m - 1))
+                        x             -> x
+
+            return ((), release)
+
+    (envVendingMachine, stop) <- makeVendingMachine supply price
+
+    return (Env {..}, stop)
 
 runM
     :: Config      -- ^ configuration
     -> PlanParams  -- ^ plan configuration
     -> M a         -- ^ action
     -> Peu () a
-runM cfg pp m = liftIO $ withLock $ withConsoleRegion Linear $ \region -> do
+runM cfg pp m = withRunInIO $ \runInIO -> withLock $ runInIO $ withConsoleRegion Linear $ \region -> do
     -- Start times
-    tz           <- getCurrentTimeZone
-    startUtcTime <- getCurrentTime
-    startTime    <- getTime Monotonic
+    tz           <- liftIO getCurrentTimeZone
+    startUtcTime <- liftIO getCurrentTime
+    startTime    <- liftIO $ getTime Monotonic
 
     -- Environment
-    env <- newEnv cfg pp startTime
+    (env, stop) <- liftIO $ newEnv cfg pp startTime
 
     -- Stats region
-    setConsoleRegion region $ do
+    liftIO $ setConsoleRegion region $ do
         Stats dryT depT bldT <- readTVar (envTimeStats env)
         Stats dryW depW bldW <- readTVar (envTimeSums env)
         Stats dryD depD bldD <- readTVar (envDoneStats env)
@@ -170,19 +251,22 @@ runM cfg pp m = liftIO $ withLock $ withConsoleRegion Linear $ \region -> do
             , "  dbg: " ++ show (done, done')
             ]
 
-    x <- runM' env m
-    endTime <- getTime Monotonic
+    x <- changePeu (\() -> env) m
+    endTime <- liftIO $ getTime Monotonic
+
+    -- stop vending machine
+    liftIO stop
 
     -- Print stats
-    processTimes <- getProcessTimes
-    stats        <- readTVarIO (envDoneStats env)
-    timeStats    <- readTVarIO (envTimeStats env)
-    timeSums     <- readTVarIO (envTimeSums env)
+    processTimes <- liftIO $ getProcessTimes
+    stats        <- liftIO $ readTVarIO (envDoneStats env)
+    timeStats    <- liftIO $ readTVarIO (envTimeStats env)
+    timeSums     <- liftIO $ readTVarIO (envTimeSums env)
 
     let formatStats header f (Stats dry dep bld) = map (mkTxt Black) $
             header : [ f dry , f dep , f bld ]
 
-    outputConcurrent $ renderTable
+    liftIO $ outputConcurrent $ renderTable
         [ [ emptyTxt, mkTxt Black "dry", mkTxt Black "dep", mkTxt Black "build" ]
         , formatStats "counts"  (printf "%d ") stats
         , formatStats "q50"     (printf "%.03fs" . fromMaybe 0 . TD.quantile 0.5) timeStats
@@ -190,7 +274,7 @@ runM cfg pp m = liftIO $ withLock $ withConsoleRegion Linear $ \region -> do
         , formatStats "total"   (printf "%.03fs") timeSums
         ]
 
-    outputConcurrent $
+    liftIO $ outputConcurrent $
         let ProcessTimes _ _ _ (CClock u') (CClock s') = processTimes
             e = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
             u = fromIntegral u' / 1e2 :: Double
@@ -202,12 +286,12 @@ runM cfg pp m = liftIO $ withLock $ withConsoleRegion Linear $ \region -> do
             , printf "time: %.03fs\n" e
             ] :: String
 
+
     return x
 
 runUrakkaM :: M (Urakka () a) -> M a
 runUrakkaM actionU = do
     u <- actionU
-    -- liftIO $ outputConcurrent "Urakka constructed"
     withRunInIO $ \_runInIO -> withConsoleRegion Linear $ \region -> do
         estimator <- mkEstimator
 
@@ -242,6 +326,7 @@ runUrakkaM actionU = do
 
         (asyncUrakka, concSt) <- runConcurrent' onDone () u
 
+{-
         titleThread <- async $ do
             let loop :: Maybe String -> IO ()
                 loop old = do
@@ -254,18 +339,14 @@ runUrakkaM actionU = do
                     loop (Just title)
 
             loop Nothing
+-}
 
         setConsoleRegion region $ fmap T.pack $ urakkaLine concSt
-
         result <- wait asyncUrakka
-        cancel titleThread
         return result
 
 mkM :: (Env -> IO a) -> M a
 mkM f = ask >>= liftIO . f
-
-runM' :: Env -> M a -> IO a
-runM' = runPeu
 
 putStrs :: MonadIO m => [String] -> m ()
 putStrs = liftIO . outputConcurrent . unlines
@@ -363,7 +444,13 @@ runCabal mode dir ghcVersion constraints = do
         $ Binary.encode (ghcVersion, constraintsS)
 
 runWithGHC :: Mode' -> Path Absolute -> GHCVer -> FilePath -> [String] -> M (ExitCode, ByteString, ByteString)
-runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putStats
+runWithGHC mode dir ghcVersion cmd args = do
+    env <- ask
+    liftIO $ do
+        putRun env
+        x <- liftIO $ action env
+        putStats env
+        return x
   where
     dry = mode == ModeDry'
     dir' = Path.toUnrootedFilePath $ Path.takeFileName dir
@@ -384,7 +471,13 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         ModeDep'   -> s { statsDepRuns   = f (statsDepRuns s) }
         ModeDry'   -> s { statsDryRuns   = f (statsDryRuns s) }
 
-    action env =  bracket acquire release $ \() -> do
+    wishes :: Wishes L ()
+    wishes = case mode of
+        ModeDry' -> wish LDry
+        ModeDep' -> wish (LDep ghcVersion)
+        ModeBld' -> wish (LBld ghcVersion)
+
+    action env =  withWishes (envVendingMachine env) wishes $ \() -> do
         outputConcurrent $ dir' ++ " " ++ colored Blue formatted ++ "\n"
         let process = (Process.proc cmd args) { Process.cwd = Just $ Path.toFilePath dir }
         startTime <- getTime Monotonic
@@ -399,56 +492,6 @@ runWithGHC mode dir ghcVersion cmd args = mkM putRun *> mkM action <* mkM putSta
         o <- evaluate (force o')
         e <- evaluate (force e')
         return (ec, o, e)
-      where
-        threads = case mode of
-            ModeDry'   -> 1
-            ModeDep'   -> envCabalJobs env
-            ModeBld' -> ghcJobs (envGhcJobs env) ghcVersion
-
-        ghcLock = index (envGhcLocks env) ghcVersion
-        threadLock = envThreads env
-
-        acquire = atomically $ do
-            case mode of
-                ModeDry' -> pure ()
-                ModeDep' -> do
-                    b <- readTVar ghcLock
-                    case b of
-                        Nothing       -> writeTVar ghcLock (Just GHCStore)
-                        Just GHCStore -> pure ()
-                        _             -> retry
-                ModeBld' -> do
-                    b <- readTVar ghcLock
-                    case b of
-                        Nothing           -> writeTVar ghcLock (Just (GHCBuild 0))
-                        Just (GHCBuild n) -> writeTVar ghcLock (Just (GHCBuild (succ n)))
-                        _                 -> retry
-
-            n <- readTVar threadLock
-            unless (n >= threads) retry
-
-            let n' = n - threads
-            writeTVar threadLock $! n'
-
-        release _ = atomically $ do
-            case mode of
-                ModeDry' -> pure ()
-                ModeDep' -> do
-                    b <- readTVar ghcLock
-                    case b of
-                        Nothing       -> pure () -- weird
-                        Just GHCStore -> writeTVar ghcLock Nothing
-                        _             -> retry
-                ModeBld' -> do
-                    b <- readTVar ghcLock
-                    case b of
-                        Nothing         -> pure () -- weird
-                        Just (GHCBuild n)
-                            | n <= 0    -> writeTVar ghcLock Nothing
-                            | otherwise -> writeTVar ghcLock (Just (GHCBuild (pred n)))
-                        _               -> retry
-            n <- readTVar threadLock
-            writeTVar threadLock $! n + threads
 
 jobs :: M (Int, Int)
 jobs = mkM $ \env -> pure (envGhcJobs env, envCabalJobs env)

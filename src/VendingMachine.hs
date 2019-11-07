@@ -2,26 +2,23 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes     #-}
 module VendingMachine (
+    VendingMachine,
     makeVendingMachine,
     withWishes,
     Wishes,
+    wish,
     ) where
 
 import Prelude
 
 import Control.Applicative.Free
-import Control.Concurrent        (threadDelay)
-import Control.Concurrent.Async  (async, cancel, mapConcurrently_, wait)
+import Control.Concurrent.Async  (async, cancel)
 import Control.Concurrent.STM
 import Control.Exception
-import Control.Monad             (forever, unless, when)
+import Control.Monad             (unless, when)
 import Data.Bifunctor            (first)
-import Data.Char                 (ord)
 import Data.Kind                 (Type)
-import Data.List                 (sortOn)
-import Data.List                 (foldl')
-import Data.Monoid               (Sum (..))
-import System.Console.Concurrent (outputConcurrent, withConcurrentOutput)
+import Data.List                 (foldl', sortOn)
 
 -- | Make a vending machine.
 makeVendingMachine
@@ -43,89 +40,8 @@ withWishes vm order kont = do
     Ticket open <- atomically $ placeOrder vm order
     bracket (atomically (takeTMVar open)) (atomically . snd) (kont . fst)
 
--------------------------------------------------------------------------------
--- Example
--------------------------------------------------------------------------------
-
-data C a where
-    CInt  :: Char -> C Int
-    CBool :: C Bool
-
-{-
-Thread created'a'
-Thread created'b'
-Thread created'c'
-Thread created'd'
-Thread created'e'
-Thread created'f'
-Thread created'g'
-Thread created'h'
-Thread created'i'
-Thread created'k'
-Thread created'm'
-Thread created'l'
-Thread running('b',0,True)
-Thread running('a',1,False)
-Thread running('c',2,True)
-Thread closing'b'
-Thread running('d',2,False)
-Thread closing'c'
-Thread closing'a'
-Thread running('e',2,True)
-Thread running('f',2,False)
-Thread closing'd'
-Thread running('g',2,True)
-Thread closing'f'
-Thread closing'e'
-Thread running('h',2,False)
-Thread running('i',2,True)
-Thread closing'g'
-Thread running('k',2,False)
-Thread closing'h'
-Thread closing'i'
-Thread running('l',2,True)
-Thread running('m',2,False)
-Thread closing'k'
-Thread closing'l'
-Thread closing'm'
--}
-
-main :: IO ()
-main = do
-    ints  <- newTVarIO (0 :: Int)
-    bools <- newTVarIO True
-
-    let supply :: C a -> STM (a, STM ())
-        supply (CInt _) = do
-            i <- readTVar ints
-            when (i > 2) retry -- semaphore!
-            writeTVar ints (i + 1)
-            return (i, modifyTVar ints pred)
-
-        supply CBool = do
-            b <- readTVar bools
-            writeTVar bools (not b)
-            return (b, return ())
-
-    -- we price by name
-    let price :: C a -> Sum Int
-        price (CInt c) = Sum (ord c)
-        price CBool    = mempty
-
-    (vm, stop) <- makeVendingMachine supply price
-
-    withConcurrentOutput $ mapConcurrently_ id
-        [ do
-            outputConcurrent $ "Thread created" ++ show name ++ "\n"
-            threadDelay 1000
-            withWishes vm ((,) <$> liftAp (CInt name) <*> liftAp CBool) $ \(i, b) -> do
-                outputConcurrent $ "Thread running" ++ show (name, i, b) ++ "\n"
-                threadDelay 100000
-                outputConcurrent $ "Thread closing" ++ show name ++ "\n"
-        | name <- "abcdefghiklm"
-        ]
-
-    stop
+wish :: f a -> Wishes f a
+wish = liftAp
 
 -------------------------------------------------------------------------------
 -- Private
@@ -158,20 +74,21 @@ placeOrder (VendingMachine orders _ price _) wishes = do
 runVendingMachine
     :: VendingMachine f
     -> IO ()
-runVendingMachine vm@(VendingMachine orders supply _ close) = do
+runVendingMachine vm@(VendingMachine ordersVar supply _ close) = do
     done <- atomically $ do
         x <- tryReadTChan close
         case x of
             Just () -> return True
             Nothing -> do
-                orders'' <- readTVar orders
-                let orders' = sortOn (\(Order _ _ p) -> p) orders''
+                orders0 <- readTVar ordersVar
+                when (null orders0) retry
+                let orders1 = sortOn (\(Order _ _ p) -> p) orders0
                 foldl' orElse retry
                     [ do
                         a <- unW (runAp (W . supply) wishes)
                         putTMVar tmvar a
-                        writeTVar orders orders''
-                    | (Order wishes (Ticket tmvar) _, orders'') <- unconsAny orders'
+                        writeTVar ordersVar orders2
+                    | (Order wishes (Ticket tmvar) _, orders2) <- unconsAny orders1
                     ]
                 return False
 
@@ -179,7 +96,7 @@ runVendingMachine vm@(VendingMachine orders supply _ close) = do
 
 unconsAny :: [a] -> [(a, [a])]
 unconsAny = go [] where
-    go ls []     = []
+    go _  []     = []
     go ls (r:rs) = (r, ls ++ rs) :  go (ls ++ [r]) rs
 
 -------------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 module Peura.Monad (
     Peu (..),
     runPeu,
+    changePeu,
     -- * Output
     withSetSgrCode,
     output,
@@ -60,6 +61,9 @@ runPeu r m = withConcurrentOutput $ do
 
     unPeu m env
 
+changePeu :: (r -> s) -> Peu s a -> Peu r a
+changePeu f (Peu m) = Peu $ \e -> m $ e { envR = f (envR e) }
+
 instance Applicative (Peu r) where
     pure = \x -> Peu (\_ -> pure x)
     (<*>) = ap
@@ -106,6 +110,8 @@ instance MonadMask (Peu r) where
         (unPeu acquire r)
         (\resource exitCase -> unPeu (release resource exitCase) r)
         (\resource -> unPeu (use resource) r)
+
+-- instance LiftRegion
 
 -------------------------------------------------------------------------------
 -- Output

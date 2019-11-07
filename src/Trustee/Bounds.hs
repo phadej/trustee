@@ -47,17 +47,21 @@ cmdBounds opts dir verify limit = do
 
     case xs of
         [cabalFile] -> do
+            putInfo "Reading hackage index"
             index' <- liftIO $ fst <$> readIndex (goIndexState opts)
             let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
+
+            putInfo "Reading cabal file"
             gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
+
             cols <- for ghcs $ \ghcVersion -> do
                 cells <- boundsForGhc verify limit dir index gpd ghcVersion
                 return $ Map.mapKeys ((,) ghcVersion) <$> cells
 
-            output <- urakka (Map.unions <$> sequenceA cols) $ \cols' ->
+            out <- urakka (Map.unions <$> sequenceA cols) $ \cols' ->
                 putStrs [ renderTable $ makeTable makeCell ghcs cols' ]
 
-            return output
+            return out
 
         _ -> fail "no .cabal file found"
 
@@ -93,7 +97,7 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
     let deps = allBuildDepends (toVersion ghcVersion) gpd
     let deps' = Map.intersectionWith withinRange' index deps
 
-    ress <- for (Map.toList deps') $ \(pkgName, vs) ->
+    ress <- for (Map.toList deps') $ \(pkgName, vs) -> do
         fmap2 ((,) pkgName) $ findLowest pkgName $ case limit of
             LimitLower -> vs
             LimitUpper -> reverse vs
@@ -103,7 +107,8 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
     withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
 
     findLowest :: PackageName -> [Version] -> M (Urakka () Result)
-    findLowest pkgName vs = divideRanges majorVs
+    findLowest pkgName vs = do
+        divideRanges majorVs
       where
         u = listToMaybe vs
 
@@ -158,17 +163,18 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
             if_ inR <$> linear (NE.toList r) <*> linearRanges rs
 
         divideRanges :: [NonEmpty Version] -> M (Urakka () Result)
-        divideRanges us = case take3 us of
-            Left us'         -> linearRanges us'
-            Right (vsl, vsr) -> do
-                inLeft <- urakka (pure ()) $ \() -> do
-                    (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
-                        intersectVersionRanges (orLaterVersion $ minimum2 vsl) (orEarlierVersion $ maximum2 vsl)
-                    return $ case ec of
-                        ExitSuccess   -> True
-                        ExitFailure _ -> False
+        divideRanges us = do
+            case take3 us of
+                Left us'         -> linearRanges us'
+                Right (vsl, vsr) -> do
+                    inLeft <- urakka (pure ()) $ \() -> do
+                        (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
+                            intersectVersionRanges (orLaterVersion $ minimum2 vsl) (orEarlierVersion $ maximum2 vsl)
+                        return $ case ec of
+                            ExitSuccess   -> True
+                            ExitFailure _ -> False
 
-                if_ inLeft <$> divideRanges (toList vsl) <*> divideRanges vsr
+                    if_ inLeft <$> divideRanges (toList vsl) <*> divideRanges vsr
 
     isFailure (ExitFailure _) = True
     isFailure ExitSuccess     = False
@@ -180,7 +186,7 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
         | otherwise = ResultAlmost v
 
 take3 :: [a] -> Either [a] (NonEmpty a, [a])
-take3 (a:b:c:d:es) = Right (a :| [b,c,d], es)
+take3 (a:b:c:d:e:fs) = Right (a :| [b,c,d], e:fs)
 take3 xs           = Left xs
 
 -------------------------------------------------------------------------------
