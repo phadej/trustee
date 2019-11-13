@@ -32,8 +32,12 @@ module Peura.Exports (
     Text,
     Version,
     VersionRange,
+    -- * Functors
+    Proxy (..),
+    Const (..),
+    Identity (..),
     -- * Exceptions
-    Exception,
+    Exception (..),
     IOException,
     SomeException,
     -- * Individual functions
@@ -53,6 +57,9 @@ module Peura.Exports (
     -- ** Data.Foldable
     for_,
     traverse_,
+    -- ** Data.Functor
+    void,
+    (<&>),
     -- ** Data.Maybe
     fromMaybe,
     mapMaybe,
@@ -82,20 +89,25 @@ module Peura.Exports (
 -- to get all members of Foldable
 import Data.Foldable as A (Foldable (..))
 import Prelude       as A
-       (Applicative (..), Bool (..), Bounded (..), Double, Either (..),
-       Enum (..), Eq (..), FilePath, Fractional (..), Functor (..), IO, Int,
-       Integer, Integral (..), Maybe (..), Monad (..), Monoid (..), Num (..),
-       Ord (..), Rational, Real (..), RealFrac (..), Semigroup (..), Show (..),
-       String, Traversable (..), all, and, any, concat, concatMap, const,
-       curry, dropWhile, either, filter, flip, fromIntegral, fst, id, length,
-       map, maybe, not, or, otherwise, realToFrac, replicate, return, reverse,
-       snd, span, take, takeWhile, uncurry, unlines, unwords, zipWith, ($),
-       ($!), (&&), (++), (.), (<$>), (||))
+       (Applicative (..), Bool (..), Bounded (..), Either (..), Enum (..),
+       Eq (..), FilePath, Functor (..), IO, Maybe (..), Monad (..),
+       Monoid (..), Ord (..), Semigroup (..), Show (..), String,
+       Traversable (..), all, and, any, concat, concatMap, const, curry,
+       dropWhile, either, filter, flip, fst, id, map, maybe, not, or,
+       otherwise, replicate, return, reverse, snd, span, take, takeWhile,
+       uncurry, unlines, unwords, zipWith, ($), ($!), (&&), (++), (.), (<$>),
+       (||))
+
+-- numerics
+import Prelude as A
+       (Double, Fractional (..), Int, Integer, Integral (..), Num (..),
+       Rational, Real (..), RealFrac (..), Word, fromIntegral, realToFrac)
 
 import Codec.Serialise                 (Serialise)
-import Control.Applicative             (Alternative (..))
+import Control.Applicative             (Alternative (..), Const (..))
 import Control.DeepSeq                 (NFData (..), force)
-import Control.Exception               (Exception, IOException, SomeException)
+import Control.Exception
+       (Exception (..), IOException, SomeException)
 import Control.Lens
        (at, ifor, ifor_, itraverse, itraverse_, ix, (^?))
 import Control.Monad                   (ap, foldM, unless, when, (<$!>))
@@ -107,10 +119,13 @@ import Control.Monad.Reader.Class      (MonadReader (ask, local))
 import Data.ByteString                 (ByteString)
 import Data.Coerce                     (Coercible, coerce)
 import Data.Foldable                   (for_, traverse_)
+import Data.Functor (void, (<&>))
+import Data.Functor.Identity           (Identity (..))
 import Data.List                       (sortBy, sortOn)
 import Data.List.NonEmpty              (NonEmpty (..), groupBy, head, last)
 import Data.Map.Strict                 (Map)
 import Data.Maybe                      (fromMaybe, mapMaybe)
+import Data.Proxy                      (Proxy (..))
 import Data.Set                        (Set)
 import Data.String                     (IsString (..))
 import Data.Text                       (Text)

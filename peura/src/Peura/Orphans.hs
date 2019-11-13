@@ -18,3 +18,7 @@ instance S.Serialise PackageName where
 instance S.Serialise Version where
     encode = S.encode . prettyShow
     decode = S.decode >>= either fail return . eitherParsec
+
+instance S.Serialise VersionRange where
+    encode = S.encode . prettyShow
+    decode = S.decode >>= either fail return . eitherParsec
