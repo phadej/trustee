@@ -48,7 +48,7 @@ cmdBounds opts dir verify limit = do
     case xs of
         [cabalFile] -> do
             putInfo "Reading hackage index"
-            index' <- liftIO $ fst <$> readIndex (goIndexState opts)
+            index' <- liftIO $ readIndex (goIndexState opts)
             let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
 
             putInfo "Reading cabal file"

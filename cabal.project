@@ -1,5 +1,6 @@
 packages: .
 packages: peura
+packages: https://hackage.haskell.org/package/cabal-parsers-0.1/candidate/cabal-parsers-0.1.tar.gz
 
 with-compiler: ghc-8.6.5
 

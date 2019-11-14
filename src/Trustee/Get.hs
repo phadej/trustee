@@ -17,7 +17,7 @@ import Prelude (putStrLn)
 
 cmdGet :: GlobalOpts -> PackageName -> VersionRange -> Peu r ()
 cmdGet opts pkgname vr = liftIO $ do
-    index <- fst <$> readIndex Nothing
+    index <- readIndex Nothing
     for_ (Map.lookup pkgname index) $ \iv ->
         for_ (indexValueVersions (goIncludeDeprecated opts) iv) $ \v ->
             when (v `withinRange` vr) $ do
