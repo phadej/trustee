@@ -2,12 +2,12 @@
 module Trustee.Get where
 
 import Distribution.Version (withinRange)
-import System.Directory     (doesDirectoryExist)
 import System.FilePath      ((</>))
 
-import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
-import qualified System.Process  as Process
+import qualified Data.ByteString  as BS
+import qualified Data.Map.Strict  as Map
+import qualified System.Directory as D
+import qualified System.Process   as Process
 
 import Trustee.Index
 import Trustee.Options
@@ -22,7 +22,7 @@ cmdGet opts pkgname vr = liftIO $ do
         for_ (indexValueVersions (goIncludeDeprecated opts) iv) $ \v ->
             when (v `withinRange` vr) $ do
                 let dirname = prettyShow pkgname ++ "-" ++ prettyShow v
-                exists <- doesDirectoryExist dirname
+                exists <- D.doesDirectoryExist dirname
                 if exists
                 then putStrLn $ dirname ++ " exists"
                 else do

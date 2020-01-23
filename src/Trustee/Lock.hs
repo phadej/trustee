@@ -34,7 +34,7 @@ withLock action = do
 
     let lockFile = cacheDir </> "lock"
     let pidFile  = cacheDir </> "pid"
-    let close fd = fdUnlock fd >> fdClose fd
+    let close fd = fdUnlock fd *> fdClose fd
     displayConsoleRegions $ withConsoleRegion Linear $ \region ->
         bracket (fdOpen lockFile) close $
             loop (0 :: Integer) region lockFile pidFile

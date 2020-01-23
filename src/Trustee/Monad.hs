@@ -19,7 +19,6 @@ module Trustee.Monad (
     runWithGHC,
     ) where
 
-import Control.Concurrent.Async  (async, cancel, wait)
 import Control.Concurrent.STM
        (STM, TVar, atomically, modifyTVar, modifyTVar', newTVarIO, readTVar,
        readTVarIO, retry, writeTVar)
@@ -47,6 +46,7 @@ import Urakka
 import Urakka.Estimation
        (addEstimationPoint, currentEstimate, mkEstimator)
 
+import qualified Control.Concurrent.Async  as Async
 import qualified Cabal.Plan                as Cabal
 import qualified Crypto.Hash.SHA512        as SHA512
 import qualified Data.Binary               as Binary
@@ -342,7 +342,7 @@ runUrakkaM actionU = do
 -}
 
         setConsoleRegion region $ fmap T.pack $ urakkaLine concSt
-        result <- wait asyncUrakka
+        result <- Async.wait asyncUrakka
         return result
 
 mkM :: (Env -> IO a) -> M a

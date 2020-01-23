@@ -1,15 +1,14 @@
 packages: .
-packages: peura
-packages: https://hackage.haskell.org/package/cabal-parsers-0.1/candidate/cabal-parsers-0.1.tar.gz
 
 with-compiler: ghc-8.6.5
 
 source-repository-package
   type: git
-  location: https://github.com/phadej/urakka.git
-  tag: 1682aee970a446fc6af30b155d316f91d8e1d902
+  location: https://github.com/phadej/cabal-extras.git
+  tag: 6054f4505e9b5a87073c76fe2854317b2dfe43c6
+  subdir: peura
 
 source-repository-package
   type: git
-  location: https://github.com/phadej/regression-simple.git
-  tag: 09346dc9f135fb8fc1ce73e253ad55c9ea5f041f
+  location: https://github.com/phadej/urakka.git
+  tag: 1682aee970a446fc6af30b155d316f91d8e1d902

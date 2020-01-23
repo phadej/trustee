@@ -23,6 +23,7 @@ import Distribution.Version
        withinRange)
 import System.FilePath.Glob                   (compile, globDir1)
 import System.Path                            (Absolute, Path)
+import Prelude (userError)
 
 import qualified Data.List.NonEmpty              as NE
 import qualified Data.Map.Strict                 as Map
@@ -63,7 +64,7 @@ cmdBounds opts dir verify limit = do
 
             return out
 
-        _ -> fail "no .cabal file found"
+        _ -> throwM (userError "no .cabal file found")
 
 data Result
     = ResultOk      !Version

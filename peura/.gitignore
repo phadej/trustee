@@ -1,6 +1,0 @@
-dist/
-dist-newstyle/
-.ghc.environment.*
-test-actual
-test-expected
-test-lock
