@@ -289,61 +289,65 @@ runM cfg pp m = withRunInIO $ \runInIO -> withLock $ runInIO $ withConsoleRegion
 
     return x
 
-runUrakkaM :: M (Urakka () a) -> M a
+runUrakkaM :: M (STM String, Urakka () a) -> M a
 runUrakkaM actionU = do
-    u <- actionU
-    withRunInIO $ \_runInIO -> withConsoleRegion Linear $ \region -> do
-        estimator <- mkEstimator
+    (progress, u) <- actionU
+    withRunInIO $ \_runInIO ->
+        withConsoleRegion Linear $ \region -> do
+        withConsoleRegion Linear $ \regionStatusLine -> do
+            estimator <- mkEstimator
 
-        let mi = underEstimate u
-        let ma = overEstimate u
+            let mi = underEstimate u
+            let ma = overEstimate u
 
-        tz           <- getCurrentTimeZone
-        startUtcTime <- getCurrentTime
+            tz           <- getCurrentTimeZone
+            startUtcTime <- getCurrentTime
 
-        let onDone :: ConcSt -> IO ()
-            onDone = addEstimationPoint estimator
+            let onDone :: ConcSt -> IO ()
+                onDone = addEstimationPoint estimator
 
-        let urakkaLine :: ConcSt -> STM String
-            urakkaLine concSt = do
-                q <- urakkaQueued concSt
-                d <- urakkaDone concSt
-                ma' <- urakkaOverEstimate concSt
+            let urakkaLine :: ConcSt -> STM String
+                urakkaLine concSt = do
+                    q <- urakkaQueued concSt
+                    d <- urakkaDone concSt
+                    ma' <- urakkaOverEstimate concSt
 
-                dur <- currentEstimate estimator
-                let eta = fmap (\dur' -> utcToLocalTime tz $ addUTCTime (realToFrac dur') startUtcTime) dur
+                    dur <- currentEstimate estimator
+                    let eta = fmap (\dur' -> utcToLocalTime tz $ addUTCTime (realToFrac dur') startUtcTime) dur
 
-                return $ unwords
-                    [ "trustee "
-                    , show d
-                    , "/"
-                    , show (max mi q)
-                    , "(" ++ show ma' ++ "/" ++ show ma ++ ")"
-                    -- , maybe "est. dur:" (printf "%.02fs") dur
-                    , maybe "no ETA" (formatTime defaultTimeLocale "ETA %T") eta
-                    , show dur
-                    ]
+                    return $ unwords
+                        [ "trustee "
+                        , show d
+                        , "/"
+                        , show (max mi q)
+                        , "(" ++ show ma' ++ "/" ++ show ma ++ ")"
+                        -- , maybe "est. dur:" (printf "%.02fs") dur
+                        , maybe "no ETA" (formatTime defaultTimeLocale "ETA %T") eta
+                        , show dur
+                        ]
 
-        (asyncUrakka, concSt) <- runConcurrent' onDone () u
+            (asyncUrakka, concSt) <- runConcurrent' onDone () u
 
-{-
-        titleThread <- async $ do
-            let loop :: Maybe String -> IO ()
-                loop old = do
-                    title <- atomically $ do
-                        new <- urakkaLine concSt
-                        when (Just new == old) retry
-                        return new
+    {-
+            titleThread <- async $ do
+                let loop :: Maybe String -> IO ()
+                    loop old = do
+                        title <- atomically $ do
+                            new <- urakkaLine concSt
+                            when (Just new == old) retry
+                            return new
 
-                    setTitle title
-                    loop (Just title)
+                        setTitle title
+                        loop (Just title)
 
-            loop Nothing
--}
+                loop Nothing
+    -}
 
-        setConsoleRegion region $ fmap T.pack $ urakkaLine concSt
-        result <- Async.wait asyncUrakka
-        return result
+            setConsoleRegion region (fmap T.pack progress)
+
+            setConsoleRegion regionStatusLine $ fmap T.pack $ urakkaLine concSt
+            result <- Async.wait asyncUrakka
+            return result
 
 mkM :: (Env -> IO a) -> M a
 mkM f = ask >>= liftIO . f
