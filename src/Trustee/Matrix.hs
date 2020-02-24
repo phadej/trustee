@@ -53,7 +53,7 @@ cmdMatrix opts verify dirs' = do
         : map mkCell xs
 
     mkCell :: CabalResult -> Txt
-    mkCell CabalResultPending    = mkTxt Black    "..."
+    mkCell CabalResultPending    = mkTxt Black   "..."
     mkCell CabalResultOk         = mkTxt Green   "OK"
     mkCell CabalResultDryFail {} = mkTxt Blue    "NO-IP"
     mkCell CabalResultDepFail {} = mkTxt Magenta "DEP"

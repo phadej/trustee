@@ -4,6 +4,7 @@ module Trustee.Bounds (cmdBounds) where
 import Algebra.Lattice
        (BoundedMeetSemiLattice (top), Lattice (..), meets)
 import Control.Arrow                          (returnA, (+++), (>>>), (|||))
+import Control.Concurrent.STM                 (STM, orElse)
 import Data.Function                          (on)
 import Data.Maybe                             (listToMaybe)
 import Data.Semigroup                         (Max (..), Min (..))
@@ -21,9 +22,9 @@ import Distribution.Version
        (intersectVersionRanges, mkVersion, orEarlierVersion, orLaterVersion,
        simplifyVersionRange, thisVersion, unionVersionRanges, versionNumbers,
        withinRange)
+import Prelude                                (userError)
 import System.FilePath.Glob                   (compile, globDir1)
 import System.Path                            (Absolute, Path)
-import Prelude (userError)
 
 import qualified Data.List.NonEmpty              as NE
 import qualified Data.Map.Strict                 as Map
@@ -41,7 +42,7 @@ import Trustee.Txt
 import Peura
 import Urakka
 
-cmdBounds :: GlobalOpts -> Path Absolute -> Verify -> Limit -> M (Urakka () ())
+cmdBounds :: GlobalOpts -> Path Absolute -> Verify -> Limit -> M (STM String, Urakka () ())
 cmdBounds opts dir verify limit = do
     let ghcs = ghcsInRange (goGhcVersions opts)
     xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
@@ -55,19 +56,29 @@ cmdBounds opts dir verify limit = do
             putInfo "Reading cabal file"
             gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
 
-            cols <- for ghcs $ \ghcVersion -> do
-                cells <- boundsForGhc verify limit dir index gpd ghcVersion
-                return $ Map.mapKeys ((,) ghcVersion) <$> cells
+            colsR <- for ghcs $ \ghcVer -> do
+                cells <- boundsForGhc verify limit dir index gpd ghcVer
+                let addVersion :: Map PackageName a -> Map (GHCVer, PackageName) a
+                    addVersion = Map.mapKeys ((,) ghcVer)
+                return $ bimap addVersion (fmap addVersion) cells
 
-            out <- urakka (Map.unions <$> sequenceA cols) $ \cols' ->
+            let stms :: STM (Map (GHCVer, PackageName) Result)
+                stms = traverse (`orElse` return ResultPending)
+                     $ Map.unions $ map fst colsR
+
+                cols :: Urakka () (Map (GHCVer, PackageName) Result)
+                cols = Map.unions <$> traverse snd colsR
+
+            out <- urakka cols $ \cols' ->
                 putStrs [ renderTable $ makeTable makeCell ghcs cols' ]
 
-            return out
+            return (renderTable . makeTable makeCell ghcs <$> stms, out)
 
         _ -> throwM (userError "no .cabal file found")
 
 data Result
-    = ResultOk      !Version
+    = ResultPending
+    | ResultOk      !Version
     | ResultAlmost  !Version
     | ResultNoPlan
     | ResultDepFail !Version
@@ -77,14 +88,12 @@ data Result
 instance NFData Result
 
 makeCell ::  Result -> Txt
+makeCell ResultPending     = mkTxt Black   "..."
 makeCell (ResultOk v)      = mkTxt Green   $ prettyShow v
 makeCell (ResultAlmost v)  = mkTxt Cyan    $ prettyShow v
 makeCell ResultNoPlan      = mkTxt Blue    "no-plan"
 makeCell (ResultDepFail v) = mkTxt Magenta $ prettyShow v
 makeCell (ResultFail v)    = mkTxt Red     $ prettyShow v
-
-fmap2 :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
-fmap2 f = fmap (fmap f)
 
 boundsForGhc
     :: Verify
@@ -93,23 +102,33 @@ boundsForGhc
     -> Map.Map PackageName (Set.Set Version)
     -> GenericPackageDescription
     -> GHCVer
-    -> M (Urakka () (Map.Map PackageName Result))
-boundsForGhc verify limit dir index gpd ghcVersion = do
-    let deps = allBuildDepends (toVersion ghcVersion) gpd
+    -> M (Map.Map PackageName (STM Result), Urakka () (Map.Map PackageName Result))
+boundsForGhc verify limit dir index gpd ghcVer = do
+    let deps = allBuildDepends (toVersion ghcVer) gpd
     let deps' = Map.intersectionWith withinRange' index deps
 
-    ress <- for (Map.toList deps') $ \(pkgName, vs) -> do
-        fmap2 ((,) pkgName) $ findLowest pkgName $ case limit of
+    resR <- for (Map.toList deps') $ \(pn, vs) -> do
+        let f :: a -> (PackageName, a)
+            f = (,) pn
+        fmap (bimap f (fmap f)) $ findLowest pn $ case limit of
             LimitLower -> vs
             LimitUpper -> reverse vs
 
-    return $ Map.fromList <$> sequenceA ress
+    let stms :: Map PackageName (STM Result)
+        stms = Map.fromList $ map fst resR
+
+        res :: Urakka () (Map PackageName Result)
+        res = Map.fromList <$> traverse snd resR
+
+    return (stms, res)
   where
     withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
 
-    findLowest :: PackageName -> [Version] -> M (Urakka () Result)
-    findLowest pkgName vs = do
-        divideRanges majorVs
+    findLowest :: PackageName -> [Version] -> M (STM Result, Urakka () Result)
+    findLowest pn vs = do
+        ur <- divideRanges majorVs
+        (stm, post) <- urakkaSTM return
+        return (stm, ur >>> post)
       where
         u = listToMaybe vs
 
@@ -119,10 +138,10 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
         linear :: [Version] -> M (Urakka () Result)
         linear [] = return (pure ResultNoPlan)
         linear (v:vs') = do
-            let constraints = Map.singleton pkgName (thisVersion v)
+            let constraints = Map.singleton pn (thisVersion v)
 
             uDry <- urakka' $ \() -> do
-                (ec, _, _) <- runCabal ModeDry dir ghcVersion constraints
+                (ec, _, _) <- runCabal ModeDry dir ghcVer constraints
                 return $ case ec of
                     ExitSuccess   -> Right (resultOk u v)
                     ExitFailure _ -> Left ()
@@ -132,13 +151,13 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
             uAll <- case verify of
                 Verify ->  do
                     uDep <- urakka' $ \res -> do
-                        (ec, _, _) <- runCabal ModeDep dir ghcVersion constraints
+                        (ec, _, _) <- runCabal ModeDep dir ghcVer constraints
                         if isFailure ec
                         then return $ Left (ResultDepFail v)
                         else return $ Right res
 
                     uBld <- urakka' $ \res -> do
-                        (ec, _, _) <- runCabal ModeBuild dir ghcVersion constraints
+                        (ec, _, _) <- runCabal ModeBuild dir ghcVer constraints
                         if isFailure ec
                         then return $ ResultFail v
                         else return res
@@ -155,7 +174,7 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
         linearRanges [r] = linear (NE.toList r)
         linearRanges (r:rs) = do
             inR <- urakka (pure ()) $ \() -> do
-                (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
+                (ec, _, _) <- runCabal ModeDry dir ghcVer $ Map.singleton pn $
                     intersectVersionRanges (orLaterVersion $ minimum r) (orEarlierVersion $ maximum r)
                 return $ case ec of
                     ExitSuccess   -> True
@@ -169,7 +188,7 @@ boundsForGhc verify limit dir index gpd ghcVersion = do
                 Left us'         -> linearRanges us'
                 Right (vsl, vsr) -> do
                     inLeft <- urakka (pure ()) $ \() -> do
-                        (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
+                        (ec, _, _) <- runCabal ModeDry dir ghcVer $ Map.singleton pn $
                             intersectVersionRanges (orLaterVersion $ minimum2 vsl) (orEarlierVersion $ maximum2 vsl)
                         return $ case ec of
                             ExitSuccess   -> True
@@ -195,7 +214,7 @@ take3 xs           = Left xs
 -------------------------------------------------------------------------------
 
 allBuildDepends :: Version -> GenericPackageDescription -> Map.Map PackageName VersionRange
-allBuildDepends ghcVersion
+allBuildDepends ghcVer
     = fmap simplifyVersionRange
     . extractBuildDepends
   where
@@ -214,7 +233,7 @@ allBuildDepends ghcVersion
     evalConfVar :: PD.ConfVar -> Either PD.ConfVar Bool
     evalConfVar (PD.OS Linux)    = Right True
     evalConfVar (PD.OS _)        = Right False
-    evalConfVar (PD.Impl GHC vr) = Right $ ghcVersion `withinRange` vr
+    evalConfVar (PD.Impl GHC vr) = Right $ ghcVer `withinRange` vr
     evalConfVar (PD.Impl _ _)    = Right False
     evalConfVar c                = Left c
 
@@ -272,11 +291,11 @@ maximum2 = getMax . foldMap1 (foldMap1 Max)
 makeTable :: (a -> Txt) -> [GHCVer] -> Map.Map (GHCVer, PackageName) a -> [[Txt]]
 makeTable mkCell ghcs m
     = (emptyTxt : map (mkTxt Black . prettyShow. toVersion) ghcs)
-    : map mkRow pkgNames
+    : map mkRow pns
   where
-    pkgNames = Set.toList $ Set.map snd $ Map.keysSet m
+    pns = Set.toList $ Set.map snd $ Map.keysSet m
 
     mkRow :: PackageName -> [Txt]
-    mkRow pkgName
-        = mkTxt Black (prettyShow pkgName)
-        : map (\g -> maybe emptyTxt mkCell $ Map.lookup (g, pkgName) m) ghcs
+    mkRow pn
+        = mkTxt Black (prettyShow pn)
+        : map (\g -> maybe emptyTxt mkCell $ Map.lookup (g, pn) m) ghcs

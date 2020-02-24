@@ -14,7 +14,7 @@ main = runPeu () $ configure >>= \(opts, pp, cmd, cfg) -> case cmd of
     CmdGet pkgname vr  -> cmdGet opts pkgname vr
     CmdBounds verify l -> runM cfg pp $ do
         cwd <- getCurrentDirectory
-        runUrakkaM $ fmap ((,) (return "")) $ cmdBounds opts cwd verify l
+        runUrakkaM $ cmdBounds opts cwd verify l
     CmdMatrix test dirs -> runM cfg pp $ do
         dirs' <- traverse makeAbsolute dirs
         runUrakkaM $ cmdMatrix opts test dirs'
