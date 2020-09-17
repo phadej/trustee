@@ -14,9 +14,11 @@ import Data.Time                     (UTCTime, defaultTimeLocale, parseTimeM)
 import Distribution.Text             (simpleParse)
 import Distribution.Types.Dependency (Dependency (..))
 import Distribution.Version          (anyVersion)
+import System.Path                   (fromAbsoluteFilePath)
 
 import qualified Data.Map            as Map
 import qualified Options.Applicative as O
+
 
 import Peura
 
@@ -38,6 +40,7 @@ data PlanParams = PlanParams
     , ppAllowNewer  :: [String]                     -- TODO: proper type
     , ppIndexState  :: Maybe UTCTime
     , ppBackjumps   :: Maybe Int
+    , ppLocalRepos  :: [Path Absolute]
     }
   deriving Show
 
@@ -71,9 +74,10 @@ globalOpts = mkGlobalOpts
     <*> many allowNewer
     <*> optional indexState
     <*> optional backjumps
+    <*> many localrepo
     <*> includeDeprecated
   where
-    mkGlobalOpts x0 x1 x2 x3 x4 = GlobalOpts x0 (PlanParams x1 x2 x3 x4)
+    mkGlobalOpts x0 x1 x2 x3 x4 x5 = GlobalOpts x0 (PlanParams x1 x2 x3 x4 x5)
 
     option x ms = O.option x (mconcat ms)
 
@@ -110,6 +114,14 @@ globalOpts = mkGlobalOpts
         [ O.long "max-backjumps"
         , O.metavar ":count"
         , O.help "Maximum number of backjumps allowed"
+        ]
+
+    localrepo :: O.Parser (Path Absolute)
+    -- TODO: this will error on non-absolute paths
+    localrepo = O.option (O.maybeReader $ return . fromAbsoluteFilePath) $ mconcat
+        [ O.long "local-repo"
+        , O.metavar ":path"
+        , O.help "Local file+noindex repository"
         ]
 
     includeDeprecated = a <|> b <|> pure IncludeDeprecated where

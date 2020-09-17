@@ -46,18 +46,17 @@ import Urakka
 import Urakka.Estimation
        (addEstimationPoint, currentEstimate, mkEstimator)
 
-import qualified Control.Concurrent.Async  as Async
-import qualified Cabal.Plan                as Cabal
-import qualified Crypto.Hash.SHA512        as SHA512
-import qualified Data.Binary               as Binary
-import qualified Data.ByteString.Base16    as BS16
-import qualified Data.Map.Strict           as Map
-import qualified Data.TDigest              as TD
-import qualified Data.Text                 as T
-import qualified Data.Text.Encoding        as TE
-import qualified System.Path               as Path
-import qualified System.Process            as Process
-import qualified System.Process.ByteString as ProcessExtras
+import qualified Cabal.Plan               as Cabal
+import qualified Control.Concurrent.Async as Async
+import qualified Crypto.Hash.SHA512       as SHA512
+import qualified Data.Binary              as Binary
+import qualified Data.ByteString.Base16   as BS16
+import qualified Data.ByteString.Lazy     as LBS
+import qualified Data.Map.Strict          as Map
+import qualified Data.TDigest             as TD
+import qualified Data.Text                as T
+import qualified Data.Text.Encoding       as TE
+import qualified System.Path              as Path
 
 import Trustee.Config
 import Trustee.GHC
@@ -406,8 +405,17 @@ runCabal mode dir ghcVersion constraints = do
     backjumps <- askBackjumps
     let backjumpsArg = maybe [] (\b -> ["--max-backjumps=" ++ show b]) backjumps
 
+    repos <- askLocalRepos
+    let reposArgs :: [String]
+        reposArgs =
+            [ "--local-no-index-repo=" ++ name ++ ":" ++ toFilePath repoPath
+            | repoPath <- repos
+            , let name = toUnrootedFilePath (takeFileName repoPath)
+            ]
+
     (_jGHC, jCabal) <- jobs
-    runWithGHC mode' dir ghcVersion "cabal" $
+    (ec, out, err) <- runWithGHC mode' dir ghcVersion "cabal" $
+        reposArgs ++
         [ "new-build"
         , "--builddir=.dist-newstyle-trustee/" ++ buildDirSuffix constraintsS
         , "-w", "ghc-" ++ ghcVersion'
@@ -417,6 +425,8 @@ runCabal mode dir ghcVersion constraints = do
         ] ++ optArg ++ modeArg ++ indexStateArg ++ backjumpsArg ++ allowNewerArg ++ constraintsArg ++
         [ "."
         ]
+
+    return (ec, LBS.toStrict out, LBS.toStrict err)
   where
     optArg = case mode of
         ModeBuild -> ["-O0"]
@@ -447,14 +457,13 @@ runCabal mode dir ghcVersion constraints = do
         $ SHA512.hashlazy
         $ Binary.encode (ghcVersion, constraintsS)
 
-runWithGHC :: Mode' -> Path Absolute -> GHCVer -> FilePath -> [String] -> M (ExitCode, ByteString, ByteString)
+runWithGHC :: Mode' -> Path Absolute -> GHCVer -> FilePath -> [String] -> M (ExitCode, LBS.ByteString, LBS.ByteString)
 runWithGHC mode dir ghcVersion cmd args = do
     env <- ask
-    liftIO $ do
-        putRun env
-        x <- liftIO $ action env
-        putStats env
-        return x
+    liftIO $ putRun env
+    x <- action env
+    liftIO $ putStats env
+    return x
   where
     dry = mode == ModeDry'
     dir' = Path.toUnrootedFilePath $ Path.takeFileName dir
@@ -481,21 +490,23 @@ runWithGHC mode dir ghcVersion cmd args = do
         ModeDep' -> wish (LDep ghcVersion)
         ModeBld' -> wish (LBld ghcVersion)
 
-    action env =  withWishes (envVendingMachine env) wishes $ \() -> do
-        outputConcurrent $ dir' ++ " " ++ colored Blue formatted ++ "\n"
-        let process = (Process.proc cmd args) { Process.cwd = Just $ Path.toFilePath dir }
-        startTime <- getTime Monotonic
-        (ec, o', e') <- ProcessExtras.readCreateProcessWithExitCode process mempty
-        endTime <- getTime Monotonic
-        let diff = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
-        atomically $ do
-            modifyTVar' (envTimeSums env)  (modifyStats (+ diff))
-            modifyTVar' (envTimeStats env) (modifyStats (TD.insert diff))
-            writeTVar (envClock env) endTime
-        outputConcurrent $  dir' ++ " " ++ colored (color ec) formatted ++ printf " %.03fs" diff ++ "\n"
-        o <- evaluate (force o')
-        e <- evaluate (force e')
-        return (ec, o, e)
+    action :: Env -> M (ExitCode, LBS.ByteString, LBS.ByteString)
+    action env = withWishes (envVendingMachine env) wishes $ \() -> do
+        startTime <- liftIO $ do
+            outputConcurrent $ dir' ++ " " ++ colored Blue formatted ++ "\n"
+            getTime Monotonic
+        (ec, o', e') <- runProcess dir cmd args mempty
+        liftIO $ do
+            endTime <- getTime Monotonic
+            let diff = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
+            atomically $ do
+                modifyTVar' (envTimeSums env)  (modifyStats (+ diff))
+                modifyTVar' (envTimeStats env) (modifyStats (TD.insert diff))
+                writeTVar (envClock env) endTime
+            outputConcurrent $  dir' ++ " " ++ colored (color ec) formatted ++ printf " %.03fs" diff ++ "\n"
+            o <- evaluate (force o')
+            e <- evaluate (force e')
+            return (ec, o, e)
 
 jobs :: M (Int, Int)
 jobs = mkM $ \env -> pure (envGhcJobs env, envCabalJobs env)
@@ -513,3 +524,6 @@ askAllowNewer = mkM $ return . ppAllowNewer . envPlanParams
 
 askBackjumps :: M (Maybe Int)
 askBackjumps = mkM $ return . ppBackjumps . envPlanParams
+
+askLocalRepos :: M [Path Absolute]
+askLocalRepos = mkM $ return . ppLocalRepos . envPlanParams

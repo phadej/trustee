@@ -12,13 +12,14 @@ module VendingMachine (
 import Prelude
 
 import Control.Applicative.Free
-import Control.Concurrent.Async  (async, cancel)
+import Control.Concurrent.Async (async, cancel)
 import Control.Concurrent.STM
 import Control.Exception
-import Control.Monad             (unless, when)
-import Data.Bifunctor            (first)
-import Data.Kind                 (Type)
-import Data.List                 (foldl', sortOn)
+import Control.Monad            (unless, when)
+import Control.Monad.IO.Unlift  (MonadUnliftIO (..))
+import Data.Bifunctor           (first)
+import Data.Kind                (Type)
+import Data.List                (foldl', sortOn)
 
 -- | Make a vending machine.
 makeVendingMachine
@@ -35,10 +36,10 @@ makeVendingMachine supply price = do
         atomically $ writeTChan close ()
         cancel a)
 
-withWishes :: VendingMachine f -> Wishes f a -> (a -> IO r) -> IO r
-withWishes vm order kont = do
+withWishes :: MonadUnliftIO m => VendingMachine f -> Wishes f a -> (a -> m r) -> m r
+withWishes vm order kont = withRunInIO $ \runInIO -> do
     Ticket open <- atomically $ placeOrder vm order
-    bracket (atomically (takeTMVar open)) (atomically . snd) (kont . fst)
+    bracket (atomically (takeTMVar open)) (atomically . snd) (runInIO . kont . fst)
 
 wish :: f a -> Wishes f a
 wish = liftAp
