@@ -5,10 +5,13 @@ with-compiler: ghc-8.6.5
 source-repository-package
   type: git
   location: https://github.com/phadej/cabal-extras.git
-  tag: 6054f4505e9b5a87073c76fe2854317b2dfe43c6
+  tag: ddc3ce204ca31927309273ce24f27ffee8546043
   subdir: peura
 
 source-repository-package
   type: git
   location: https://github.com/phadej/urakka.git
   tag: 1682aee970a446fc6af30b155d316f91d8e1d902
+
+allow-newer: peura:Cabal
+allow-newer: urakka:unliftio-core

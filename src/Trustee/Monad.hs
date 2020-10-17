@@ -15,36 +15,30 @@ module Trustee.Monad (
     findPlan,
     Mode (..),
     Mode' (..),
+    Env,
     -- * Internal
     runWithGHC,
     ) where
 
 import Control.Concurrent.STM
-       (STM, TVar, atomically, modifyTVar, modifyTVar', newTVarIO, readTVar,
-       readTVarIO, retry, writeTVar)
+       (STM, TVar, atomically, modifyTVar, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, writeTVar)
 import Control.Exception         (evaluate)
 import Data.List                 (isPrefixOf)
 import Data.Monoid               (Sum (..))
 import Data.Time
-       (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime,
-       getCurrentTimeZone, utcToLocalTime)
-import Distribution.Version
-       (VersionRange, intersectVersionRanges, simplifyVersionRange)
+       (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime, getCurrentTimeZone, utcToLocalTime)
+import Distribution.Types.Flag   (dispFlagAssignment)
+import Distribution.Version      (VersionRange, anyVersion, simplifyVersionRange)
 import Foreign.C.Types           (CClock (..))
-import System.Clock
-       (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
-import System.Console.ANSI       (setTitle)
+import System.Clock              (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
 import System.Console.Concurrent (outputConcurrent)
-import System.Console.Regions
-       (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
+import System.Console.Regions    (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
 import System.Exit               (ExitCode (..))
 import System.Posix.Process      (ProcessTimes (..), getProcessTimes)
 import Text.Printf               (printf)
 import Urakka
-       (ConcSt, Urakka, overEstimate, runConcurrent', underEstimate,
-       urakkaDone, urakkaOverEstimate, urakkaQueued)
-import Urakka.Estimation
-       (addEstimationPoint, currentEstimate, mkEstimator)
+       (ConcSt, Urakka, overEstimate, runConcurrent', underEstimate, urakkaDone, urakkaOverEstimate, urakkaQueued)
+import Urakka.Estimation         (addEstimationPoint, currentEstimate, mkEstimator)
 
 import qualified Cabal.Plan               as Cabal
 import qualified Control.Concurrent.Async as Async
@@ -57,6 +51,7 @@ import qualified Data.TDigest             as TD
 import qualified Data.Text                as T
 import qualified Data.Text.Encoding       as TE
 import qualified System.Path              as Path
+import qualified Text.PrettyPrint         as PP
 
 import Trustee.Config
 import Trustee.GHC
@@ -393,8 +388,8 @@ findPlan dir ghcVersion constraints = liftIO $
 runCabal :: Mode -> Path Absolute -> GHCVer -> Map PackageName VersionRange -> M (ExitCode, ByteString, ByteString)
 runCabal mode dir ghcVersion constraints = do
     constraints' <- askConstraints constraints
-    let constraintsS = fmap simplifyVersionRange constraints'
-    let constraintsArg = uncurry mkConstraint <$> Map.toList constraintsS
+    let constraintsS = fmap simplifyVersionRangeC constraints'
+    let constraintsArgs = concatMap (uncurry mkConstraints) (Map.toList constraintsS)
 
     indexState <- askIndexState
     let indexStateArg = maybe [] (return . formatTime defaultTimeLocale "--index-state=%Y-%m-%dT%H:%M:%SZ") indexState
@@ -422,7 +417,7 @@ runCabal mode dir ghcVersion constraints = do
         , testFlag, "--disable-benchmarks"
         , "-j" ++ show jCabal
         -- , "--ghc-options=" ++ ghcOptions
-        ] ++ optArg ++ modeArg ++ indexStateArg ++ backjumpsArg ++ allowNewerArg ++ constraintsArg ++
+        ] ++ optArg ++ modeArg ++ indexStateArg ++ backjumpsArg ++ allowNewerArg ++ constraintsArgs ++
         [ "."
         ]
 
@@ -448,7 +443,11 @@ runCabal mode dir ghcVersion constraints = do
         ModeDry'       -> ["--dry-run"]
         ModeDep'       -> ["--dep"]
         ModeBld'     -> []
-    mkConstraint pkgName vr = "--constraint=" ++ prettyShow pkgName ++ prettyShow vr
+
+    mkConstraints pkgName (PackageConstraint vr fa) =
+        [ "--constraint=" ++ prettyShow pkgName ++ prettyShow vr | vr /= anyVersion ] ++
+        -- TODO: Cabal-3.4
+        [ "--constraint=" ++ prettyShow pkgName ++ PP.render (dispFlagAssignment fa) | fa /= mempty ]
 
     buildDirSuffix constraintsS
         = T.unpack
@@ -495,7 +494,7 @@ runWithGHC mode dir ghcVersion cmd args = do
         startTime <- liftIO $ do
             outputConcurrent $ dir' ++ " " ++ colored Blue formatted ++ "\n"
             getTime Monotonic
-        (ec, o', e') <- runProcess dir cmd args mempty
+        (ec, o', e') <- runProcess nullTracer' dir cmd args mempty
         liftIO $ do
             endTime <- getTime Monotonic
             let diff = fromInteger (toNanoSecs (endTime - startTime)) / 1e9 :: Double
@@ -508,13 +507,16 @@ runWithGHC mode dir ghcVersion cmd args = do
             e <- evaluate (force e')
             return (ec, o, e)
 
+    nullTracer' = nullTracer :: Tracer M TraceProcess
+
 jobs :: M (Int, Int)
 jobs = mkM $ \env -> pure (envGhcJobs env, envCabalJobs env)
 
-askConstraints :: Map PackageName VersionRange -> M (Map PackageName VersionRange)
+askConstraints :: Map PackageName VersionRange -> M (Map PackageName PackageConstraint)
 askConstraints c = mkM $ \env -> pure
-    $ Map.unionWith intersectVersionRanges c
+    $ Map.unionWith (<>) (fmap (`PackageConstraint` mempty) c)
     $ ppConstraints $ envPlanParams env
+  where
 
 askIndexState :: M (Maybe UTCTime)
 askIndexState = mkM $ return . ppIndexState . envPlanParams
@@ -527,3 +529,6 @@ askBackjumps = mkM $ return . ppBackjumps . envPlanParams
 
 askLocalRepos :: M [Path Absolute]
 askLocalRepos = mkM $ return . ppLocalRepos . envPlanParams
+
+simplifyVersionRangeC :: PackageConstraint -> PackageConstraint
+simplifyVersionRangeC (PackageConstraint vr fa) = PackageConstraint (simplifyVersionRange vr) fa

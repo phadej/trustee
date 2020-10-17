@@ -47,7 +47,7 @@ library
     , urakka
 
   build-depends:
-    , aeson                 ^>=1.4.0.0
+    , aeson                 ^>=1.5.4.0
     , aeson-compat          ^>=0.3.7.1
     , ansi-terminal         ^>=0.10.1
     , async                 ^>=2.2.1
@@ -55,9 +55,9 @@ library
     , base16-bytestring     ^>=0.1.1.6
     , binary                ^>=0.8.5.1
     , bytestring            ^>=0.10.8.2
-    , Cabal                 ^>=3.0.0.0
-    , cabal-install-parsers ^>=0.2
-    , cabal-plan            ^>=0.6.1.0
+    , Cabal                 ^>=3.2.0.0
+    , cabal-install-parsers ^>=0.3
+    , cabal-plan            ^>=0.7.1.0
     , clock                 ^>=0.8
     , concurrent-output     ^>=1.10.3
     , containers            ^>=0.5.10.2 || ^>=0.6.0.1
@@ -83,8 +83,12 @@ library
     , time                  ^>=1.8.0.2 || ^>=1.9.3
     , transformers          ^>=0.5.2.0
     , unix                  ^>=2.7.2.2
-    , unliftio-core         ^>=0.1.2.0
+    , unliftio-core         ^>=0.2.0.1
     , vec                   ^>=0.3
+
+  -- TODO: Cabal-3.4
+  build-depends:
+    , pretty
 
   default-extensions:
     NoImplicitPrelude

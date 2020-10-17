@@ -4,6 +4,7 @@ module Trustee.Options (
     IncludeDeprecated (..),
     goIndexState,
     PlanParams (..),
+    PackageConstraint (..),
     Limit (..),
     Verify (..),
     parseOpts,
@@ -11,14 +12,14 @@ module Trustee.Options (
 
 import Control.Applicative           (many, optional, (<**>), (<|>))
 import Data.Time                     (UTCTime, defaultTimeLocale, parseTimeM)
-import Distribution.Text             (simpleParse)
-import Distribution.Types.Dependency (Dependency (..))
-import Distribution.Version          (anyVersion)
+import Distribution.Parsec           (Parsec (..), ParsecParser, eitherParsec, explicitEitherParsec)
+import Distribution.Types.Flag       (FlagAssignment, parsecFlagAssignment)
+import Distribution.Version          (anyVersion, intersectVersionRanges)
 import System.Path                   (fromAbsoluteFilePath)
 
-import qualified Data.Map            as Map
-import qualified Options.Applicative as O
-
+import qualified Data.Map                        as Map
+import qualified Distribution.Compat.CharParsing as P
+import qualified Options.Applicative             as O
 
 import Peura
 
@@ -29,15 +30,39 @@ data GlobalOpts = GlobalOpts
     { goGhcVersions       :: VersionRange
     , goPlanParams        :: PlanParams
     , goIncludeDeprecated :: IncludeDeprecated
+    , goTracer            :: TracerOptions Void -> TracerOptions Void
     }
-  deriving Show
 
 goIndexState :: GlobalOpts -> Maybe UTCTime
 goIndexState = ppIndexState . goPlanParams
 
+-- TODO: support installed
+data PackageConstraint
+    = PackageConstraint VersionRange FlagAssignment
+  deriving (Show, Generic)
+
+instance Binary PackageConstraint
+
+-- this will work better with Cabal-3.4
+instance Parsec PackageConstraint where
+    parsec = mkVr <$> parsec <|> mkFa <$> parsecFlagAssignment where
+        mkVr vr = PackageConstraint vr mempty
+        mkFa fa = PackageConstraint anyVersion fa
+
+instance Semigroup PackageConstraint where
+    PackageConstraint vrA faA <> PackageConstraint vrB faB =
+        PackageConstraint (intersectVersionRanges vrA vrB) (faA <> faB)
+
+namedConstraint :: ParsecParser (PackageName, PackageConstraint)
+namedConstraint = do
+    pn <- parsec
+    P.spaces
+    c <- parsec
+    return (pn, c)
+
 data PlanParams = PlanParams
-    { ppConstraints :: Map PackageName VersionRange -- TODO: support installed
-    , ppAllowNewer  :: [String]                     -- TODO: proper type
+    { ppConstraints :: Map PackageName PackageConstraint
+    , ppAllowNewer  :: [String]                           -- TODO: proper type
     , ppIndexState  :: Maybe UTCTime
     , ppBackjumps   :: Maybe Int
     , ppLocalRepos  :: [Path Absolute]
@@ -70,25 +95,26 @@ parseOpts = O.execParser $ O.info ((,) <$> globalOpts <*> cmd <**> O.helper) $ m
 globalOpts :: O.Parser GlobalOpts
 globalOpts = mkGlobalOpts
     <$> ghcs
-    <*> fmap mkConstraintMap (many constraints)
+    <*> fmap Map.fromList (many constraints)
     <*> many allowNewer
     <*> optional indexState
     <*> optional backjumps
     <*> many localrepo
     <*> includeDeprecated
+    <*> tracerOptionsParser
   where
     mkGlobalOpts x0 x1 x2 x3 x4 x5 = GlobalOpts x0 (PlanParams x1 x2 x3 x4 x5)
 
     option x ms = O.option x (mconcat ms)
 
-    ghcs = option (O.maybeReader simpleParse)
+    ghcs = option (O.eitherReader eitherParsec)
         [ O.short 'g'
         , O.long "ghcs"
         , O.metavar ":version-range"
         , O.help "GHC versions to build with"
         ] <|> pure anyVersion
 
-    constraints = option (O.maybeReader simpleParse)
+    constraints = option (O.eitherReader $ explicitEitherParsec namedConstraint)
         [ O.short 'c'
         , O.long "constraint"
         , O.metavar ":constraint"
@@ -189,12 +215,12 @@ cmdGet = CmdGet
     <*> (version <|> pure anyVersion)
     <**> O.helper
   where
-    name = O.argument (O.maybeReader simpleParse) $ mconcat
+    name = O.argument (O.eitherReader eitherParsec) $ mconcat
         [ O.metavar ":pkgname"
         , O.help "Package name"
         ]
 
-    version = O.argument (O.maybeReader simpleParse) $ mconcat
+    version = O.argument (O.eitherReader eitherParsec) $ mconcat
         [ O.metavar ":versions"
         , O.help "Version range"
         ]
@@ -211,7 +237,3 @@ verify = verify' <|> solveOnly <|> pure Verify
         [ O.long "solve-only"
         , O.help "Only solve"
         ]
-
-mkConstraintMap :: [Dependency] -> Map PackageName VersionRange
-mkConstraintMap = Map.fromList . map toPair where
-    toPair (Dependency pname vr _) = (pname, vr)

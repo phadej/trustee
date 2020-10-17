@@ -23,7 +23,6 @@ import Distribution.Version
        simplifyVersionRange, thisVersion, unionVersionRanges, versionNumbers,
        withinRange)
 import Prelude                                (userError)
-import System.FilePath.Glob                   (compile, globDir1)
 import System.Path                            (Absolute, Path)
 
 import qualified Data.List.NonEmpty              as NE
@@ -42,19 +41,19 @@ import Trustee.Txt
 import Peura
 import Urakka
 
-cmdBounds :: GlobalOpts -> Path Absolute -> Verify -> Limit -> M (STM String, Urakka () ())
-cmdBounds opts dir verify limit = do
+cmdBounds :: TracerPeu Env Void -> GlobalOpts -> Path Absolute -> Verify -> Limit -> M (STM String, Urakka () ())
+cmdBounds tracer opts dir verify limit = do
     let ghcs = ghcsInRange (goGhcVersions opts)
-    xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
+    xs <- globDir1 "*.cabal" dir
 
     case xs of
         [cabalFile] -> do
-            putInfo "Reading hackage index"
+            putInfo tracer "Reading hackage index"
             index' <- liftIO $ readIndex (goIndexState opts)
             let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
 
-            putInfo "Reading cabal file"
-            gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
+            putInfo tracer "Reading cabal file"
+            gpd <- liftIO $ readGenericPackageDescription maxBound (toFilePath cabalFile)
 
             colsR <- for ghcs $ \ghcVer -> do
                 cells <- boundsForGhc verify limit dir index gpd ghcVer
