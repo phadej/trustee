@@ -49,14 +49,14 @@ library
   build-depends:
     , aeson                 ^>=1.5.4.0
     , aeson-compat          ^>=0.3.7.1
-    , ansi-terminal         ^>=0.10.1
+    , ansi-terminal         ^>=0.11
     , async                 ^>=2.2.1
     , base                  ^>=4.12.0.0 || ^>=4.13.0.0
-    , base16-bytestring     ^>=0.1.1.6
+    , base16-bytestring     ^>=1.0.0.0
     , binary                ^>=0.8.5.1
     , bytestring            ^>=0.10.8.2
     , Cabal                 ^>=3.2.0.0
-    , cabal-install-parsers ^>=0.3
+    , cabal-install-parsers ^>=0.4
     , cabal-plan            ^>=0.7.1.0
     , clock                 ^>=0.8
     , concurrent-output     ^>=1.10.3
@@ -71,10 +71,10 @@ library
     , lattices              ^>=2
     , lukko                 ^>=0.1
     , mtl                   ^>=2.2.2
-    , optparse-applicative  ^>=0.15.1.0
+    , optparse-applicative  ^>=0.16.0.0
     , paths                 ^>=0.2.0.0
     , process               ^>=1.6.1.0
-    , selective             ^>=0.3
+    , selective             ^>=0.4.1.1
     , semigroupoids         ^>=5.3.3
     , stm                   ^>=2.4.4.1 || ^>=2.5.0.0
     , tar                   ^>=0.5.0.3

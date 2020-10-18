@@ -54,7 +54,7 @@ instance Semigroup IndexValue where
 
 readIndex :: Maybe UTCTime -> IO Index
 readIndex Nothing = do
-    meta <- cachedHackageMetadata
+    (_, meta) <- Cabal.Index.cachedHackageMetadata
     return $ fmap fromPi meta
 readIndex (Just indexState) = do
     cfg <- readConfig
