@@ -90,20 +90,21 @@ install:
   - echo 'package trustee' >> cabal.project
   - "echo '  ghc-options: -Werror=missing-methods' >> cabal.project"
   - |
-    echo "allow-newer: peura:Cabal"                               >> cabal.project
-    echo "allow-newer: urakka:unliftio-core"                      >> cabal.project
-    echo "allow-newer: urakka:selective"                          >> cabal.project
-    echo ""                                                       >> cabal.project
-    echo "source-repository-package"                              >> cabal.project
-    echo "  type:     git"                                        >> cabal.project
-    echo "  location: https://github.com/phadej/cabal-extras.git" >> cabal.project
-    echo "  tag:      91865489805b1ef282306c71d606923cc117ae42"   >> cabal.project
-    echo "  subdir:   peura"                                      >> cabal.project
-    echo ""                                                       >> cabal.project
-    echo "source-repository-package"                              >> cabal.project
-    echo "  type:     git"                                        >> cabal.project
-    echo "  location: https://github.com/phadej/urakka.git"       >> cabal.project
-    echo "  tag:      1682aee970a446fc6af30b155d316f91d8e1d902"   >> cabal.project
+    echo "packages:    https://oleg.fi/gentle-introduction-2020.11.tar.gz" >> cabal.project
+    echo "allow-newer: peura:Cabal"                                        >> cabal.project
+    echo "allow-newer: urakka:unliftio-core"                               >> cabal.project
+    echo "allow-newer: urakka:selective"                                   >> cabal.project
+    echo ""                                                                >> cabal.project
+    echo "source-repository-package"                                       >> cabal.project
+    echo "  type:     git"                                                 >> cabal.project
+    echo "  location: https://github.com/phadej/cabal-extras.git"          >> cabal.project
+    echo "  tag:      8dd1fcf31978f8312da31c24edf3f11cb8f3fd66"            >> cabal.project
+    echo "  subdir:   peura"                                               >> cabal.project
+    echo ""                                                                >> cabal.project
+    echo "source-repository-package"                                       >> cabal.project
+    echo "  type:     git"                                                 >> cabal.project
+    echo "  location: https://github.com/phadej/urakka.git"                >> cabal.project
+    echo "  tag:      1682aee970a446fc6af30b155d316f91d8e1d902"            >> cabal.project
   - "for pkg in $($HCPKG list --simple-output); do echo $pkg | sed 's/-[^-]*$//' | (grep -vE -- '^(Cabal|trustee)$' || true) | sed 's/^/constraints: /' | sed 's/$/ installed/' >> cabal.project.local; done"
   - cat cabal.project || true
   - cat cabal.project.local || true
@@ -131,20 +132,21 @@ script:
   - echo 'package trustee' >> cabal.project
   - "echo '  ghc-options: -Werror=missing-methods' >> cabal.project"
   - |
-    echo "allow-newer: peura:Cabal"                               >> cabal.project
-    echo "allow-newer: urakka:unliftio-core"                      >> cabal.project
-    echo "allow-newer: urakka:selective"                          >> cabal.project
-    echo ""                                                       >> cabal.project
-    echo "source-repository-package"                              >> cabal.project
-    echo "  type:     git"                                        >> cabal.project
-    echo "  location: https://github.com/phadej/cabal-extras.git" >> cabal.project
-    echo "  tag:      91865489805b1ef282306c71d606923cc117ae42"   >> cabal.project
-    echo "  subdir:   peura"                                      >> cabal.project
-    echo ""                                                       >> cabal.project
-    echo "source-repository-package"                              >> cabal.project
-    echo "  type:     git"                                        >> cabal.project
-    echo "  location: https://github.com/phadej/urakka.git"       >> cabal.project
-    echo "  tag:      1682aee970a446fc6af30b155d316f91d8e1d902"   >> cabal.project
+    echo "packages:    https://oleg.fi/gentle-introduction-2020.11.tar.gz" >> cabal.project
+    echo "allow-newer: peura:Cabal"                                        >> cabal.project
+    echo "allow-newer: urakka:unliftio-core"                               >> cabal.project
+    echo "allow-newer: urakka:selective"                                   >> cabal.project
+    echo ""                                                                >> cabal.project
+    echo "source-repository-package"                                       >> cabal.project
+    echo "  type:     git"                                                 >> cabal.project
+    echo "  location: https://github.com/phadej/cabal-extras.git"          >> cabal.project
+    echo "  tag:      8dd1fcf31978f8312da31c24edf3f11cb8f3fd66"            >> cabal.project
+    echo "  subdir:   peura"                                               >> cabal.project
+    echo ""                                                                >> cabal.project
+    echo "source-repository-package"                                       >> cabal.project
+    echo "  type:     git"                                                 >> cabal.project
+    echo "  location: https://github.com/phadej/urakka.git"                >> cabal.project
+    echo "  tag:      1682aee970a446fc6af30b155d316f91d8e1d902"            >> cabal.project
   - "for pkg in $($HCPKG list --simple-output); do echo $pkg | sed 's/-[^-]*$//' | (grep -vE -- '^(Cabal|trustee)$' || true) | sed 's/^/constraints: /' | sed 's/$/ installed/' >> cabal.project.local; done"
   - cat cabal.project || true
   - cat cabal.project.local || true

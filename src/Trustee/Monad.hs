@@ -108,7 +108,7 @@ newEnv cfg pp ts = do
         envPlanParams = pp
 
     envThreads   <- newTVarIO (cfgThreads cfg)
-    envGhcLocks  <- sequence (pure (newTVarIO Nothing))
+    envGhcLocks  <- sequenceA (pure (newTVarIO Nothing))
     envClock     <- newTVarIO ts
     envTimeStats <- newTVarIO (Stats mempty mempty mempty)
     envTimeSums  <- newTVarIO (Stats 0 0 0)

@@ -1,11 +1,14 @@
 packages: .
 
+index-state: 2020-11-09T22:00:58Z
 with-compiler: ghc-8.6.5
+
+packages: https://oleg.fi/gentle-introduction-2020.11.tar.gz
 
 source-repository-package
   type: git
   location: https://github.com/phadej/cabal-extras.git
-  tag: 91865489805b1ef282306c71d606923cc117ae42
+  tag: 8dd1fcf31978f8312da31c24edf3f11cb8f3fd66
   subdir: peura
 
 source-repository-package

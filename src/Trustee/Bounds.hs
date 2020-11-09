@@ -29,7 +29,6 @@ import qualified Data.List.NonEmpty              as NE
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
 import qualified Distribution.PackageDescription as PD
-import qualified System.Path                     as Path
 
 import Trustee.GHC     hiding (index)
 import Trustee.Index
@@ -40,6 +39,9 @@ import Trustee.Txt
 
 import Peura
 import Urakka
+
+-- We'd like to have Foldable1?
+import Prelude (minimum, maximum)
 
 cmdBounds :: TracerPeu Env Void -> GlobalOpts -> Path Absolute -> Verify -> Limit -> M (STM String, Urakka () ())
 cmdBounds tracer opts dir verify limit = do
