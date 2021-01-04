@@ -24,6 +24,7 @@ data GHCVer
     | GHC_8_6
     | GHC_8_8
     | GHC_8_10
+    | GHC_9_0
   deriving (Eq, Ord, Show, Enum, Bounded, Generic)
 
 instance Binary GHCVer
@@ -46,9 +47,10 @@ toVersion GHC_8_2  = mkVersion [8,2,2]
 toVersion GHC_8_4  = mkVersion [8,4,4]
 toVersion GHC_8_6  = mkVersion [8,6,5]
 toVersion GHC_8_8  = mkVersion [8,8,4]
-toVersion GHC_8_10 = mkVersion [8,10,2]
+toVersion GHC_8_10 = mkVersion [8,10,3]
+toVersion GHC_9_0  = mkVersion [9,0,0,20201227]
 
-data PerGHC a = PerGHC a a a a a a a a a a a a
+data PerGHC a = PerGHC a a a a a a a a a a a a a
   deriving (Functor, Foldable, Traversable, Generic, Generic1)
 
 index :: PerGHC a -> GHCVer -> a
