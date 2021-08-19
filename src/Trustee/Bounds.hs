@@ -127,7 +127,13 @@ boundsForGhc verify limit dir index gpd ghcVer = do
 
     findLowest :: PackageName -> [Version] -> M (STM Result, Urakka () Result)
     findLowest pn vs = do
-        ur <- divideRanges majorVs
+        anyOk <- urakka (pure ()) $ \() -> do
+            (ec, _, _) <- runCabal ModeDry dir ghcVer Map.empty
+            return $ case ec of
+                ExitSuccess   -> True
+                ExitFailure _ -> False
+
+        ur <- if_ anyOk <$> divideRanges majorVs <*> return (pure ResultNoPlan)
         (stm, post) <- urakkaSTM return
         return (stm, ur >>> post)
       where
