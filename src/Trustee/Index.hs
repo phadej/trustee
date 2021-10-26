@@ -6,20 +6,10 @@ module Trustee.Index (
 
 import Data.Time                           (UTCTime)
 import Data.Time.Clock.POSIX
-       (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Distribution.Compat.CharParsing     (char, munch1, string)
+       (utcTimeToPOSIXSeconds)
 import Distribution.Package                (PackageName)
-import Distribution.Parsec
-       (explicitEitherParsec, parsec, runParsecParser)
-import Distribution.Parsec.FieldLineStream (fieldLineStreamFromBS)
-import Distribution.Types.Dependency       (Dependency (..))
 import Distribution.Version                (withinRange)
-import System.Directory                    (getAppUserDataDirectory)
-import System.FilePath                     ((</>))
 
-import qualified Codec.Archive.Tar       as Tar
-import qualified Codec.Archive.Tar.Entry as Tar
-import qualified Data.ByteString.Lazy    as LBS
 import qualified Data.Map.Strict         as Map
 import qualified Data.Set                as Set
 
@@ -42,12 +32,6 @@ indexValueVersions IncludeDeprecated (IV vs _)         = vs
 indexValueVersions OmitDeprecated    (IV vs Nothing)   = vs
 indexValueVersions OmitDeprecated    (IV vs (Just vr)) = Set.filter (`withinRange` vr) vs
 
-singleVersion :: Version -> IndexValue
-singleVersion v = IV (Set.singleton v) Nothing
-
-preferred :: VersionRange -> IndexValue
-preferred vr = IV Set.empty (Just vr)
-
 -- | Union versions, last preferred
 instance Semigroup IndexValue where
     IV v p <> IV v' p' = IV (Set.union v v') (p' <|> p)
@@ -65,4 +49,5 @@ readIndex (Just indexState) = do
     meta <- indexMetadata indexPath (Just (truncate (utcTimeToPOSIXSeconds indexState)))
     return $ fmap fromPi meta
 
+fromPi :: PackageInfo -> IndexValue
 fromPi p = IV (Map.keysSet (piVersions p)) (Just (piPreferred p))

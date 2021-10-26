@@ -1,15 +1,19 @@
-{-# LANGUAGE DeriveFoldable    #-}
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DeriveFoldable        #-}
+{-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DeriveTraversable     #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeOperators         #-}
 module Trustee.GHC where
 
 import Data.Binary          (Binary)
 import Distribution.Version (withinRange)
 
-import Peura
+import GHC.Generics
 
-import Data.Vec.DataFamily.SpineStrict.Pigeonhole (gtabulate, gindex)
+import Peura
 
 data GHCVer
     = GHC_7_0
@@ -77,3 +81,52 @@ ghcOptions n v
 
 ghcRtsOpts :: String
 ghcRtsOpts = "+RTS -A64m -I0 -qg -RTS"
+
+-------------------------------------------------------------------------------
+-- gindex and gtabulate
+-------------------------------------------------------------------------------
+
+gindex :: (Generic1 con, Generic idx, GIndex (Rep1 con) (Rep idx)) => con a -> idx -> a
+gindex con idx = gindex_ (from1 con) (from idx)
+
+class GIndex con idx where
+    gindex_ :: con a -> idx b -> a
+
+instance GIndex con idx => GIndex (M1 i c con) (M1 j k idx) where
+    gindex_ (M1 con) (M1 idx) = gindex_ con idx
+    {-# INLINE gindex_ #-}
+
+instance GIndex con (idx :+: idx') => GIndex (M1 i c con) (idx :+: idx') where
+    gindex_ (M1 con) idx = gindex_ con idx
+    {-# INLINE gindex_ #-}
+
+instance (GIndex con idx, GIndex con' idx') => GIndex (con :*: con') (idx :+: idx') where
+    gindex_ (con :*: _)    (L1 idx)  = gindex_ con  idx
+    gindex_ (_   :*: con') (R1 idx') = gindex_ con' idx'
+    {-# INLINE gindex_ #-}
+
+instance GIndex Par1 U1 where
+    gindex_ (Par1 x) _ = x
+    {-# INLINE gindex_ #-}
+
+gtabulate :: (Generic1 con, Generic idx, GTabulate (Rep1 con) (Rep idx)) => (idx -> a) -> con a
+gtabulate f = to1 (gtabulate_ (f . to))
+
+class GTabulate con idx where
+    gtabulate_ :: (idx b -> a) -> con a
+
+instance GTabulate con idx => GTabulate (M1 i c con) (M1 j k idx) where
+    gtabulate_ f = M1 (gtabulate_ (f . M1))
+    {-# INLINE gtabulate_ #-}
+
+instance GTabulate con (idx :+: idx') => GTabulate (M1 i c con) (idx :+: idx') where
+    gtabulate_ f = M1 (gtabulate_ f)
+    {-# INLINE gtabulate_ #-}
+
+instance (GTabulate con idx, GTabulate con' idx') => GTabulate (con :*: con') (idx :+: idx') where
+    gtabulate_ f = gtabulate_ (f . L1) :*: gtabulate_ (f . R1)
+    {-# INLINE gtabulate_ #-}
+
+instance GTabulate Par1 U1 where
+    gtabulate_ f = Par1 (f U1)
+    {-# INLINE gtabulate_ #-}
