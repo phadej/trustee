@@ -54,7 +54,7 @@ toVersion GHC_8_6  = mkVersion [8,6,5]
 toVersion GHC_8_8  = mkVersion [8,8,4]
 toVersion GHC_8_10 = mkVersion [8,10,4]
 toVersion GHC_9_0  = mkVersion [9,0,1]
-toVersion GHC_9_2  = mkVersion [9,2,0,20210821]
+toVersion GHC_9_2  = mkVersion [9,2,1]
 
 data PerGHC a = PerGHC a a a a a a a a a a a a a a
   deriving (Functor, Foldable, Traversable, Generic, Generic1)
@@ -88,6 +88,7 @@ ghcRtsOpts = "+RTS -A64m -I0 -qg -RTS"
 
 gindex :: (Generic1 con, Generic idx, GIndex (Rep1 con) (Rep idx)) => con a -> idx -> a
 gindex con idx = gindex_ (from1 con) (from idx)
+{-# INLINE gindex #-}
 
 class GIndex con idx where
     gindex_ :: con a -> idx b -> a
@@ -111,6 +112,7 @@ instance GIndex Par1 U1 where
 
 gtabulate :: (Generic1 con, Generic idx, GTabulate (Rep1 con) (Rep idx)) => (idx -> a) -> con a
 gtabulate f = to1 (gtabulate_ (f . to))
+{-# INLINE gtabulate #-}
 
 class GTabulate con idx where
     gtabulate_ :: (idx b -> a) -> con a
