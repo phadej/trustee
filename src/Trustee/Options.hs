@@ -10,15 +10,16 @@ module Trustee.Options (
     parseOpts,
     ) where
 
-import Control.Applicative           (many, optional, (<**>), (<|>))
-import Data.Time                     (UTCTime, defaultTimeLocale, parseTimeM)
-import Distribution.Parsec           (Parsec (..), ParsecParser, eitherParsec, explicitEitherParsec)
-import Distribution.Types.Flag       (FlagAssignment, parsecFlagAssignment)
-import Distribution.Version          (anyVersion, intersectVersionRanges)
-import System.Path                   (fromAbsoluteFilePath)
+import Control.Applicative     (many, optional, (<**>), (<|>))
+import Data.Time               (UTCTime, defaultTimeLocale, parseTimeM)
+import Distribution.Parsec     (Parsec (..), ParsecParser, eitherParsec, explicitEitherParsec)
+import Distribution.Types.Flag (FlagAssignment, parsecFlagAssignment)
+import Distribution.Version    (anyVersion, intersectVersionRanges)
+import System.Path             (fromAbsoluteFilePath)
 
 import qualified Data.Map                        as Map
 import qualified Distribution.Compat.CharParsing as P
+import qualified Distribution.Version            as C
 import qualified Options.Applicative             as O
 
 import Peura
@@ -106,13 +107,20 @@ globalOpts = mkGlobalOpts
     mkGlobalOpts x0 x1 x2 x3 x4 x5 = GlobalOpts x0 (PlanParams x1 x2 x3 x4 x5)
 
     option x ms = O.option x (mconcat ms)
+    flag' x ms = O.flag' x (mconcat ms)
 
-    ghcs = option (O.eitherReader eitherParsec)
+    ghcs =
+        option (O.eitherReader eitherParsec)
         [ O.short 'g'
         , O.long "ghcs"
         , O.metavar ":version-range"
         , O.help "GHC versions to build with"
-        ] <|> pure anyVersion
+        ] <|>
+        flag' (C.orLaterVersion $ C.mkVersion [8])
+        [ O.short '8'
+        , O.help "GHC>=8"
+        ] <|>
+        pure anyVersion
 
     constraints = option (O.eitherReader $ explicitEitherParsec namedConstraint)
         [ O.short 'c'
@@ -151,12 +159,12 @@ globalOpts = mkGlobalOpts
         ]
 
     includeDeprecated = a <|> b <|> pure IncludeDeprecated where
-        a = O.flag' IncludeDeprecated $ mconcat
+        a = flag' IncludeDeprecated
             [ O.long "include-deprecated"
             , O.help "Include deprecated packages (default)"
             ]
 
-        b = O.flag' OmitDeprecated $ mconcat
+        b = flag' OmitDeprecated
             [ O.long "omit-deprecated"
             , O.help "Omit deprecated packages"
             ]
