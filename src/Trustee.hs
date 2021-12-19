@@ -1,6 +1,7 @@
 module Trustee (main) where
 
 import Trustee.Bounds
+import Trustee.Sweep
 import Trustee.Config
 import Trustee.Get
 import Trustee.Matrix
@@ -21,6 +22,9 @@ main = do
         CmdBounds verify l -> runM cfg pp $ do
             cwd <- getCurrentDirectory
             runUrakkaM $ cmdBounds (hoistTracer (changePeu (const ())) tracer) opts cwd verify l
+        CmdSweep verify -> runM cfg pp $ do
+            cwd <- getCurrentDirectory
+            runUrakkaM $ cmdBoundsSweep (hoistTracer (changePeu (const ())) tracer) opts cwd verify 
         CmdMatrix test dirs -> runM cfg pp $ do
             dirs' <- traverse makeAbsolute dirs
             runUrakkaM $ cmdMatrix opts test dirs'

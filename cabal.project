@@ -11,10 +11,12 @@ source-repository-package
   tag: 8dd1fcf31978f8312da31c24edf3f11cb8f3fd66
   subdir: peura
 
-source-repository-package
-  type: git
-  location: https://github.com/phadej/urakka.git
-  tag: 1682aee970a446fc6af30b155d316f91d8e1d902
+-- source-repository-package
+--   type: git
+--   location: https://github.com/phadej/urakka.git
+--   tag: 1682aee970a446fc6af30b155d316f91d8e1d902
+
+packages: /code/public-haskell/urakka
 
 allow-newer: peura:Cabal
 allow-newer: urakka:unliftio-core

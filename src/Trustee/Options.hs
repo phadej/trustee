@@ -174,8 +174,8 @@ cmd :: O.Parser Cmd
 cmd = O.subparser $ mconcat
     [ O.command "matrix" $ O.info cmdMatrix $ O.progDesc "Build matrix"
     , O.command "bounds" $ O.info cmdBounds $ O.progDesc "Find and check bounds"
+    , O.command "sweep" $ O.info cmdSweep $ O.progDesc "Sweep dependencies"
     , O.command "get" $ O.info cmdGet $ O.progDesc "Fetch package sources"
-    -- , O.command "new-build" $ O.info cmdNewBuild $ O.progDesc "Execute cabal new-build."
     ]
 
 cmdBounds :: O.Parser Cmd
@@ -196,15 +196,10 @@ cmdBounds = CmdBounds
         , O.help "Upper bounds"
         ]
 
-{-
-cmdNewBuild :: O.Parser Cmd
-cmdNewBuild = CmdNewBuild
-    <$> many (O.strArgument $ mconcat
-        [ O.metavar "arg"
-        , O.help "arguments to cabal new-build"
-        ])
+cmdSweep :: O.Parser Cmd
+cmdSweep = CmdSweep
+    <$> verify
     <**> O.helper
--}
 
 cmdMatrix :: O.Parser Cmd
 cmdMatrix = CmdMatrix

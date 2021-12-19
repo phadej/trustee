@@ -1,43 +1,29 @@
 {-# LANGUAGE DeriveGeneric #-}
-module Trustee.Sweep (cmdSweep) where
+module Trustee.Sweep (cmdBoundsSweep) where
 
-import Algebra.Lattice
-       (BoundedMeetSemiLattice (top), Lattice (..), meets)
-import Control.Arrow                          (returnA, (>>>), (|||), (+++))
-import Control.DeepSeq                        (NFData)
-import Control.Monad                          (unless, when)
-import Control.Monad.IO.Class                 (liftIO)
+import Peura
+
+import Control.Arrow                          (returnA, (+++), (>>>), (|||))
+import Control.Concurrent.STM                 (STM, orElse)
 import Data.Function                          (on)
 import Data.List                              (intercalate)
-import Data.List.NonEmpty                     (NonEmpty (..))
-import Data.Maybe                             (listToMaybe)
-import Data.Semigroup
-       (Max (..), Min (..), Option (..), Semigroup (..), option)
+import Data.Semigroup                         (Semigroup (..))
 import Data.Traversable                       (for)
-import Distribution.Compiler                  (CompilerFlavor (..))
 import Distribution.Package                   (PackageName)
 import Distribution.PackageDescription        (GenericPackageDescription (..))
 import Distribution.PackageDescription.Parsec (readGenericPackageDescription)
 import Distribution.Pretty                    (prettyShow)
-import Distribution.System                    (OS (..))
-import Distribution.Types.Condition           (simplifyCondition)
-import Distribution.Types.CondTree
-       (CondBranch (..), CondTree (..), mapTreeConstrs)
-import Distribution.Types.Dependency          (Dependency (..))
 import Distribution.Version
-       (Version, VersionRange, intersectVersionRanges, mkVersion,
-       orEarlierVersion, orLaterVersion, simplifyVersionRange, thisVersion,
-       unionVersionRanges, versionNumbers, withinRange)
+       (Version, intersectVersionRanges, orEarlierVersion, orLaterVersion,
+        thisVersion, withinRange)
 import GHC.Generics                           (Generic)
+import Prelude                                (userError)
 import System.Exit                            (ExitCode (..))
-import System.FilePath.Glob                   (compile, globDir1)
 import System.Path                            (Absolute, Path)
 
 import qualified Data.List.NonEmpty              as NE
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
-import qualified Distribution.PackageDescription as PD
-import qualified System.Path                     as Path
 
 import Trustee.GHC     hiding (index)
 import Trustee.Index
@@ -45,15 +31,20 @@ import Trustee.Monad
 import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
-import Trustee.Util
+import Trustee.Depends
 
 import Urakka
+
+-- We'd like to have Foldable1?
+import Prelude (maximum, minimum)
+
 -------------------------------------------------------------------------------
 -- Sweep
 -------------------------------------------------------------------------------
 
 data SweepResult
-    = SweepResultNoPlan
+    = SweepResultPending
+    | SweepResultNoPlan
     | SweepResultOk      (NonEmpty Version)
     | SweepResultDepFail (NonEmpty Version)
     | SweepResultFail    (NonEmpty Version)
@@ -62,6 +53,8 @@ data SweepResult
 instance NFData SweepResult
 
 instance Semigroup SweepResult where
+    x <> SweepResultPending = x
+    SweepResultPending <> y = y
     x <> SweepResultNoPlan = x
     SweepResultNoPlan <> y = y
     SweepResultFail x <> SweepResultFail y = SweepResultFail (x <> y)
@@ -78,6 +71,7 @@ instance Monoid SweepResult where
 
 makeSweepCell :: SweepResult -> Txt
 makeSweepCell r = case r of
+    SweepResultPending    -> mkTxt Black   "..."
     SweepResultNoPlan     -> mkTxt Blue    "no-plan"
     SweepResultOk vs      -> mkTxt Green   (displayVs vs)
     SweepResultDepFail vs -> mkTxt Magenta (displayVs vs)
@@ -90,73 +84,140 @@ makeSweepCell r = case r of
       | otherwise = intercalate ", " $ map prettyShow $ NE.toList vs
 
 
-cmdBoundsSweep :: GlobalOpts -> Path Absolute -> Bool -> M ()
-cmdBoundsSweep opts dir verify = do
+cmdBoundsSweep :: TracerPeu Env Void -> GlobalOpts -> Path Absolute -> Verify -> M (STM String, Urakka () ())
+cmdBoundsSweep tracer opts dir verify = do
     let ghcs = ghcsInRange (goGhcVersions opts)
-    xs <- liftIO $ globDir1 (compile "*.cabal") (Path.toFilePath dir)
+    xs <- globDir1 "*.cabal" dir
+
     case xs of
         [cabalFile] -> do
-            index' <- liftIO $ fst <$> readIndex (goIndexState opts)
+            putInfo tracer "Reading hackage index"
+            index' <- liftIO $ readIndex (goIndexState opts)
             let index = indexValueVersions (goIncludeDeprecated opts) <$> index'
-            gpd <- liftIO $ readGenericPackageDescription maxBound cabalFile
-            cols <- fmap Map.unions $ forConcurrently ghcs $ \ghcVersion -> do
-                cells <- sweepForGhc verify dir index gpd ghcVersion
-                return $ Map.mapKeysMonotonic ((,) ghcVersion) cells
 
-            putStrs [ renderTable $ makeTable makeSweepCell ghcs cols ]
+            putInfo tracer "Reading cabal file"
+            gpd <- liftIO $ readGenericPackageDescription maxBound (toFilePath cabalFile)
 
-        _ -> fail "no .cabal file found"
+            colsR <- for ghcs $ \ghcVer -> do
+                cells <- sweepForGhc verify dir index gpd ghcVer
+                let addVersion :: Map PackageName a -> Map (GHCVer, PackageName) a
+                    addVersion = Map.mapKeys ((,) ghcVer)
+                return $ bimap addVersion (fmap addVersion) cells
+
+            let stms :: STM (Map (GHCVer, PackageName) SweepResult)
+                stms = traverse (`orElse` return SweepResultPending)
+                    $ Map.unions $ map fst colsR
+
+                cols :: Urakka () (Map (GHCVer, PackageName) SweepResult)
+                cols = Map.unions <$> traverse snd colsR
+
+            out <- urakka cols $ \cols' ->
+                putStrs [ renderTable $ makeTable makeSweepCell ghcs cols' ]
+
+            return (renderTable . makeTable makeSweepCell ghcs <$> stms, out)
+
+        _ -> throwM (userError "no .cabal file found")
 
 sweepForGhc
-    :: Bool
+    :: Verify
     -> Path Absolute
     -> Map.Map PackageName (Set.Set Version)
     -> GenericPackageDescription
     -> GHCVer
-    -> M (Map.Map PackageName SweepResult)
-sweepForGhc verify dir index gpd ghcVersion = do
-    let deps = allBuildDepends (toVersion ghcVersion) gpd
+    -> M (Map.Map PackageName (STM SweepResult), Urakka () (Map.Map PackageName SweepResult))
+sweepForGhc verify dir index gpd ghcVer = do
+    let deps = allBuildDepends (toVersion ghcVer) gpd
     let deps' = Map.intersectionWith withinRange' index deps
 
     -- putStrs $ map (uncurry formatDep) $ Map.toList deps'
 
-    fmap Map.fromList $ forConcurrently (Map.toList deps') $ \(pkgName, vs) ->
-        fmap ((,) pkgName) $ sweep pkgName vs
+    resR <- for (Map.toList deps') $ \(pn, vs) -> do
+        let f :: a -> (PackageName, a)
+            f = (,) pn
+        fmap (bimap f (fmap f)) $ sweep pn vs
+
+    let stms :: Map PackageName (STM SweepResult)
+        stms = Map.fromList $ map fst resR
+
+        res :: Urakka () (Map PackageName SweepResult)
+        res = Map.fromList <$> traverse snd resR
+
+    return (stms, res)
   where
     withinRange' vs vr = filter (`withinRange` vr) $ Set.toList vs
 
     -- formatDep :: PackageName -> [Version] -> String
     -- formatDep pn vs = prettyShow pn <> " : " <> intercalate ", " (map prettyShow vs)
 
-    sweep :: PackageName -> [Version] -> M SweepResult
-    sweep pkgName vs = mconcat <$> forConcurrently majorVs (resultRange pkgName)
+    sweep :: PackageName -> [Version] -> M (STM SweepResult, Urakka () SweepResult)
+    sweep pn vs = mconcat <$> for majorVs (resultRange pn)
       where
         majorVs :: [NonEmpty Version]
         majorVs = NE.groupBy ((==) `on` extractMajorVersion) vs
 
-    resultRange :: PackageName -> NonEmpty Version -> M SweepResult
-    resultRange pkgName r = do
-        (ec, _, _) <- runCabal ModeDry dir ghcVersion $ Map.singleton pkgName $
-            intersectVersionRanges (orLaterVersion $ minimum r) (orEarlierVersion $ maximum r)
-        case ec of
-            ExitFailure _ -> return SweepResultNoPlan
-            _             -> sconcat <$> forConcurrently r (result pkgName)
+    resultRange :: PackageName -> NonEmpty Version -> M (STM SweepResult, Urakka () SweepResult)
+    resultRange pn r = do
+        anyOk <- urakka (pure ()) $ \() -> do
+            (ec, _, _) <- runCabal ModeDry dir ghcVer $ Map.singleton pn $
+                intersectVersionRanges (orLaterVersion $ minimum r) (orEarlierVersion $ maximum r)
+            return $ case ec of
+                ExitSuccess   -> True
+                ExitFailure _ -> False
 
-    result :: PackageName -> Version -> M SweepResult
-    result pkgName v = runEarlyExit $ do
-        let cons' = Map.singleton pkgName (thisVersion v)
-        (ec0, _, _) <- lift $ runCabal ModeDry dir ghcVersion cons'
-        when (isFailure ec0) $ exit SweepResultNoPlan
+        ur <- if_ anyOk <$> (sconcat <$> for r (result pn)) <*> return (pure SweepResultNoPlan)
+        (stm, post) <- urakkaSTM return
+        return (stm, ur >>> post)
 
-        unless verify $ exit $ SweepResultOk $ pure v
+    result :: PackageName -> Version -> M (Urakka () SweepResult)
+    result pn v = do
+        let constraints  = Map.singleton pn (thisVersion v)
+        uDry <- urakka' $ \() -> do
+                (ec, _, _) <- runCabal ModeDry dir ghcVer constraints
+                return $ case ec of
+                    ExitSuccess   -> Right $ SweepResultOk $ pure v
+                    ExitFailure _ -> Left ()
 
-        (ec1, _, _) <- lift $ runCabal ModeDep dir ghcVersion cons'
-        when (isFailure ec1) $ exit $ SweepResultDepFail $ pure v
+        uAll <- case verify of
+            SolveOnly -> return uDry
 
-        (ec2, _, _) <- lift $ runCabal ModeBuild dir ghcVersion cons'
-        when (isFailure ec2) $ exit $ SweepResultFail $ pure v
+            Verify ->  do
+                uDep <- urakka' $ \res -> do
+                    (ec, _, _) <- runCabal ModeDep dir ghcVer constraints
+                    if isFailure ec
+                    then return $ Left (SweepResultDepFail $ pure v)
+                    else return $ Right res
 
-        return $ SweepResultOk $ pure v
+                uBld <- urakka' $ \res -> do
+                    (ec, _, _) <- runCabal ModeBuild dir ghcVer constraints
+                    if isFailure ec
+                    then return $ SweepResultFail $ pure v
+                    else return res
+
+                return $ uDry >>> returnA +++ (uDep >>> returnA ||| uBld)
+
+        return $ uAll >>> pure SweepResultNoPlan ||| returnA
 
     isFailure (ExitFailure _) = True
     isFailure ExitSuccess     = False
+
+instance Semigroup a => Semigroup (STM a) where
+    (<>) = liftA2 (<>)
+
+instance Monoid a => Monoid (STM a) where
+    mempty = pure mempty
+
+-------------------------------------------------------------------------------
+-- Table
+-------------------------------------------------------------------------------
+
+makeTable :: (a -> Txt) -> [GHCVer] -> Map.Map (GHCVer, PackageName) a -> [[Txt]]
+makeTable mkCell ghcs m
+    = (emptyTxt : map (mkTxt Black . prettyShow. toVersion) ghcs)
+    : map mkRow pns
+  where
+    pns = Set.toList $ Set.map snd $ Map.keysSet m
+
+    mkRow :: PackageName -> [Txt]
+    mkRow pn
+        = mkTxt Black (prettyShow pn)
+        : map (\g -> maybe emptyTxt mkCell $ Map.lookup (g, pn) m) ghcs

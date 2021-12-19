@@ -1,35 +1,25 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Trustee.Bounds (cmdBounds) where
 
-import Algebra.Lattice
-       (BoundedMeetSemiLattice (top), Lattice (..), meets)
 import Control.Arrow                          (returnA, (+++), (>>>), (|||))
 import Control.Concurrent.STM                 (STM, orElse)
 import Data.Function                          (on)
 import Data.Maybe                             (listToMaybe)
 import Data.Semigroup                         (Max (..), Min (..))
 import Data.Semigroup.Foldable                (Foldable1 (..))
-import Distribution.Compiler                  (CompilerFlavor (..))
 import Distribution.Package                   (PackageName)
 import Distribution.PackageDescription        (GenericPackageDescription (..))
 import Distribution.PackageDescription.Parsec (readGenericPackageDescription)
-import Distribution.System                    (OS (..))
-import Distribution.Types.Condition           (simplifyCondition)
-import Distribution.Types.CondTree
-       (CondBranch (..), CondTree (..), mapTreeConstrs)
-import Distribution.Types.Dependency          (Dependency (..))
 import Distribution.Version
-       (intersectVersionRanges, mkVersion, orEarlierVersion, orLaterVersion,
-       simplifyVersionRange, thisVersion, unionVersionRanges, versionNumbers,
-       withinRange)
+       (intersectVersionRanges, orEarlierVersion, orLaterVersion, thisVersion, versionNumbers, withinRange)
 import Prelude                                (userError)
 import System.Path                            (Absolute, Path)
 
-import qualified Data.List.NonEmpty              as NE
-import qualified Data.Map.Strict                 as Map
-import qualified Data.Set                        as Set
-import qualified Distribution.PackageDescription as PD
+import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict    as Map
+import qualified Data.Set           as Set
 
+import Trustee.Depends
 import Trustee.GHC     hiding (index)
 import Trustee.Index
 import Trustee.Monad
@@ -41,7 +31,7 @@ import Peura
 import Urakka
 
 -- We'd like to have Foldable1?
-import Prelude (minimum, maximum)
+import Prelude (maximum, minimum)
 
 cmdBounds :: TracerPeu Env Void -> GlobalOpts -> Path Absolute -> Verify -> Limit -> M (STM String, Urakka () ())
 cmdBounds tracer opts dir verify limit = do
@@ -219,71 +209,6 @@ take3 xs           = Left xs
 -------------------------------------------------------------------------------
 -- Helpers
 -------------------------------------------------------------------------------
-
-allBuildDepends :: Version -> GenericPackageDescription -> Map.Map PackageName VersionRange
-allBuildDepends ghcVer
-    = fmap simplifyVersionRange
-    . extractBuildDepends
-  where
-    extractBuildDepends :: GenericPackageDescription -> Map.Map PackageName VersionRange
-    extractBuildDepends gpd =
-        maybe Map.empty libBD (condLibrary gpd)
-
-    libBD :: PD.CondTree PD.ConfVar [Dependency] PD.Library
-          -> Map.Map PackageName VersionRange
-    libBD
-        = unDepMap
-        . simplifyCondTree' evalConfVar
-        . mapTreeConstrs toDepMap
-
-
-    evalConfVar :: PD.ConfVar -> Either PD.ConfVar Bool
-    evalConfVar (PD.OS Linux)    = Right True
-    evalConfVar (PD.OS _)        = Right False
-    evalConfVar (PD.Impl GHC vr) = Right $ ghcVer `withinRange` vr
-    evalConfVar (PD.Impl _ _)    = Right False
-    evalConfVar c                = Left c
-
-newtype DepMap = DepMap { unDepMap :: Map.Map PackageName VersionRange }
-
-instance Lattice DepMap where
-    -- here we want to union dependency ranges
-    DepMap x \/ DepMap y = DepMap (Map.unionWith unionVersionRanges x y)
-    DepMap x /\ DepMap y = DepMap (Map.unionWith unionVersionRanges x y)
-
-instance BoundedMeetSemiLattice DepMap where
-    top = DepMap Map.empty
-
-toDepMap :: [Dependency] -> DepMap
-toDepMap =
-    DepMap . Map.fromListWith intersectVersionRanges . map dependencyToPair
-  where
-    dependencyToPair (Dependency p vr _) = (p, vr)
-
--- | Like 'simplifyCondTree', but when a condition cannot be evaluated, both branches are included.
-simplifyCondTree'
-    :: (Lattice d, BoundedMeetSemiLattice d)
-    => (v -> Either v Bool)
-    -> PD.CondTree v d a
-    -> d
-simplifyCondTree' env (CondNode _a d ifs) =
-    d /\ meets (map simplifyIf ifs)
-  where
-    simplifyIf (CondBranch cnd t me) =
-        case simplifyCondition cnd env of
-              (PD.Lit True, _)  -> t'
-              (PD.Lit False, _) -> e'
-              (_, _)            -> t' \/  e'
-      where
-        t' = simplifyCondTree' env t
-        e' = maybe top (simplifyCondTree' env) me
-
-extractMajorVersion :: Version -> Version
-extractMajorVersion v = case versionNumbers v of
-    []          -> mkVersion [0]
-    [_]         -> v
-    [_,_]       -> v
-    (x : y : _) -> mkVersion [x, y]
 
 minimum2 :: (Foldable1 t, Foldable1 s, Ord a) => t (s a) -> a
 minimum2 = getMin . foldMap1 (foldMap1 Min)
