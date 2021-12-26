@@ -52,8 +52,8 @@ toVersion GHC_8_2  = mkVersion [8,2,2]
 toVersion GHC_8_4  = mkVersion [8,4,4]
 toVersion GHC_8_6  = mkVersion [8,6,5]
 toVersion GHC_8_8  = mkVersion [8,8,4]
-toVersion GHC_8_10 = mkVersion [8,10,4]
-toVersion GHC_9_0  = mkVersion [9,0,1]
+toVersion GHC_8_10 = mkVersion [8,10,7]
+toVersion GHC_9_0  = mkVersion [9,0,2]
 toVersion GHC_9_2  = mkVersion [9,2,1]
 
 data PerGHC a = PerGHC a a a a a a a a a a a a a a
