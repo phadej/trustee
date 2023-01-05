@@ -1,21 +1,23 @@
 packages: .
 
-index-state: 2020-11-09T22:00:58Z
-with-compiler: ghc-8.6.5
+index-state: 2023-01-05T15:57:31Z
+with-compiler: ghc-9.2.5
 
-packages: https://oleg.fi/gentle-introduction-2020.11.tar.gz
+packages: https://oleg.fi/gentle-introduction-2022.5.tar.gz
 
 source-repository-package
   type: git
   location: https://github.com/phadej/cabal-extras.git
-  tag: 8dd1fcf31978f8312da31c24edf3f11cb8f3fd66
+  tag: e1855e39a4d9d7e43309f2dc0b1875786cd46727
   subdir: peura
 
 source-repository-package
   type: git
   location: https://github.com/phadej/urakka.git
-  tag: 9c7dff37594a532d1b03fc97d41ac8ba6a75a4ac
+  tag: 86c83ad2454e0e74a045c16c9a4db5bb10a1d06b
 
-allow-newer: peura:Cabal
-allow-newer: urakka:unliftio-core
-allow-newer: urakka:selective
+allow-newer: peura:base
+allow-newer: peura:bytestring
+allow-newer: tdigest:vector
+allow-newer: tdigest:vector-algorithms
+allow-newer: regression-simple:vector

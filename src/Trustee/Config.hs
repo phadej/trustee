@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Trustee.Config where
 
-import Control.Exception (IOException)
-import Data.Aeson.Compat (FromJSON (..), decode, withObject, (.!=), (.:?))
+import Data.Aeson (FromJSON (..), eitherDecode, withObject, (.!=), (.:?))
 import Peura
+import Prelude (userError)
 
 data Config = Config
     { cfgThreads   :: !Int
@@ -31,7 +31,7 @@ readConfig = handle withDefaultConfig $ do
         cfgFile' = root </> fromUnrootedFilePath "trustee" </> fromUnrootedFilePath "config"
     cfgFile <- makeAbsolute (FsPath cfgFile')
     contents <- readLazyByteString cfgFile
-    decode contents
+    either (throwM . userError) return $ eitherDecode contents
   where
     withDefaultConfig :: IOException -> Peu r Config
     withDefaultConfig _ = return defaultConfig

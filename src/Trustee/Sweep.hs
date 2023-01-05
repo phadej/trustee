@@ -11,27 +11,26 @@ import Data.Semigroup                         (Semigroup (..))
 import Data.Traversable                       (for)
 import Distribution.Package                   (PackageName)
 import Distribution.PackageDescription        (GenericPackageDescription (..))
-import Distribution.PackageDescription.Parsec (readGenericPackageDescription)
 import Distribution.Pretty                    (prettyShow)
+import Distribution.Simple.PackageDescription (readGenericPackageDescription)
 import Distribution.Version
-       (Version, intersectVersionRanges, orEarlierVersion, orLaterVersion,
-        thisVersion, withinRange)
+       (Version, intersectVersionRanges, orEarlierVersion, orLaterVersion, thisVersion, withinRange)
 import GHC.Generics                           (Generic)
 import Prelude                                (userError)
 import System.Exit                            (ExitCode (..))
 import System.Path                            (Absolute, Path)
 
-import qualified Data.List.NonEmpty              as NE
-import qualified Data.Map.Strict                 as Map
-import qualified Data.Set                        as Set
+import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict    as Map
+import qualified Data.Set           as Set
 
+import Trustee.Depends
 import Trustee.GHC     hiding (index)
 import Trustee.Index
 import Trustee.Monad
 import Trustee.Options
 import Trustee.Table
 import Trustee.Txt
-import Trustee.Depends
 
 import Urakka
 

@@ -9,7 +9,7 @@ import Data.Semigroup                         (Max (..), Min (..))
 import Data.Semigroup.Foldable                (Foldable1 (..))
 import Distribution.Package                   (PackageName)
 import Distribution.PackageDescription        (GenericPackageDescription (..))
-import Distribution.PackageDescription.Parsec (readGenericPackageDescription)
+import Distribution.Simple.PackageDescription (readGenericPackageDescription)
 import Distribution.Version
        (intersectVersionRanges, orEarlierVersion, orLaterVersion, thisVersion, versionNumbers, withinRange)
 import Prelude                                (userError)
