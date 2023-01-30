@@ -1,6 +1,6 @@
 packages: .
 
-index-state: 2023-01-05T15:57:31Z
+index-state: 2023-01-30T16:44:20Z
 with-compiler: ghc-9.2.5
 
 packages: https://oleg.fi/gentle-introduction-2022.5.tar.gz
@@ -8,7 +8,7 @@ packages: https://oleg.fi/gentle-introduction-2022.5.tar.gz
 source-repository-package
   type: git
   location: https://github.com/phadej/cabal-extras.git
-  tag: e1855e39a4d9d7e43309f2dc0b1875786cd46727
+  tag: 9414126b55e672325614b83e20d79369e514f72c
   subdir: peura
 
 source-repository-package
@@ -18,6 +18,7 @@ source-repository-package
 
 allow-newer: peura:base
 allow-newer: peura:bytestring
+allow-newer: peura:cabal-install-parsers
 allow-newer: tdigest:vector
 allow-newer: tdigest:vector-algorithms
 allow-newer: regression-simple:vector

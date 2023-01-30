@@ -10,15 +10,17 @@ import Trustee.Options  (Cmd (..), goPlanParams, parseOpts, goTracer)
 
 import Peura
 
+import MiniCurl (withLibcurl)
+
 main :: IO ()
-main = do
+main = withLibcurl $ do
     (opts, cmd) <- parseOpts
     tracer <- makeTracerPeu $ goTracer opts defaultTracerOptions
         { tracerOptionsProcess = False
         }
     let pp = goPlanParams opts
     runPeu tracer () $ readConfig >>= \cfg -> case cmd of
-        CmdGet pkgname vr  -> cmdGet opts pkgname vr
+        CmdGet pkgname vr  -> cmdGet tracer opts pkgname vr
         CmdBounds verify l -> runM cfg pp $ do
             cwd <- getCurrentDirectory
             runUrakkaM $ cmdBounds (hoistTracer (changePeu (const ())) tracer) opts cwd verify l
