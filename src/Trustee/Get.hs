@@ -13,45 +13,54 @@ import Trustee.Options
 
 import Peura
 
-cmdGet :: TracerPeu r Void -> GlobalOpts -> PackageName -> VersionRange -> Peu r ()
-cmdGet tracer _opts pkgname vr = withSystemTempDirectory "trustee-get" $ \tmpDir -> do
+cmdGet :: TracerPeu r Void -> GlobalOpts -> PackageName -> Maybe VersionRange -> Peu r ()
+cmdGet tracer _opts pkgname mvr = withSystemTempDirectory "trustee-get" $ \tmpDir -> do
     cwd <- getCurrentDirectory
     index <- cachedHackageMetadata tracer
     for_ (Map.lookup pkgname index) $ \pkgInfo -> withCurlPeu $ \curl -> do
-        ifor_ (I.piVersions pkgInfo) $ \v ri -> do
-            when (v `withinRange` vr) $ do
-                let dirname    = prettyShow pkgname ++ "-" ++ prettyShow v
-                let tarballUrl = "https://hackage.haskell.org/package/" ++ dirname ++ "/" ++ dirname ++ ".tar.gz"
-                let cabalUrl   = "https://hackage.haskell.org/package/" ++ dirname ++ "/revision/" ++ show (I.riRevision ri) ++ ".cabal"
-                let pkgDir     = cwd </> fromUnrootedFilePath dirname
+        let versions0 :: Map Version I.ReleaseInfo
+            versions0 = I.piVersions pkgInfo
 
-                exists <- doesDirectoryExist pkgDir
-                if exists
-                then do
-                    putInfo tracer $ dirname ++ " exists"
-                else do
-                    bsTarball <- httpGet tracer curl tarballUrl (I.riTarballHash ri) (I.riTarballSize ri)
-                    bsCabal   <- httpGet tracer curl cabalUrl   (I.riCabalHash ri)   (I.riCabalSize ri)
+            versions :: Map Version I.ReleaseInfo
+            versions = case mvr of
+                Just vr -> Map.filterWithKey (\v _ -> v `withinRange` vr) versions0
+                Nothing -> case Map.lookupMax versions0 of
+                    Nothing -> Map.empty
+                    Just (v, ri) -> Map.singleton v ri
 
-                    -- write tarball to temporary location
-                    let tmpTarball = tmpDir </> fromUnrootedFilePath (dirname ++ ".tar.gz")
-                    writeByteString tmpTarball bsTarball
+        ifor_ versions $ \v ri -> do
+            let dirname    = prettyShow pkgname ++ "-" ++ prettyShow v
+            let tarballUrl = "https://hackage.haskell.org/package/" ++ dirname ++ "/" ++ dirname ++ ".tar.gz"
+            let cabalUrl   = "https://hackage.haskell.org/package/" ++ dirname ++ "/revision/" ++ show (I.riRevision ri) ++ ".cabal"
+            let pkgDir     = cwd </> fromUnrootedFilePath dirname
 
-                    -- extract the tarball
-                    _ <- runProcessCheck tracer cwd "tar" ["-xzf", toFilePath tmpTarball ]
+            exists <- doesDirectoryExist pkgDir
+            if exists
+            then do
+                putInfo tracer $ dirname ++ " exists"
+            else do
+                bsTarball <- httpGet tracer curl tarballUrl (I.riTarballHash ri) (I.riTarballSize ri)
+                bsCabal   <- httpGet tracer curl cabalUrl   (I.riCabalHash ri)   (I.riCabalSize ri)
 
-                    -- write the cabal file
-                    writeByteString (pkgDir </> fromUnrootedFilePath (prettyShow pkgname ++ ".cabal")) bsCabal
+                -- write tarball to temporary location
+                let tmpTarball = tmpDir </> fromUnrootedFilePath (dirname ++ ".tar.gz")
+                writeByteString tmpTarball bsTarball
 
-                    -- add cabal.project
-                    writeByteString (pkgDir </> fromUnrootedFilePath "cabal.project") "packages: ."
+                -- extract the tarball
+                _ <- runProcessCheck tracer cwd "tar" ["-xzf", toFilePath tmpTarball ]
 
-                    -- git
-                    _ <- runProcessCheck tracer pkgDir "git" ["init"]
-                    _ <- runProcessCheck tracer pkgDir "git" ["add", "."]
-                    _ <- runProcessCheck tracer pkgDir "git" ["commit", "-am", "trustee get"]
+                -- write the cabal file
+                writeByteString (pkgDir </> fromUnrootedFilePath (prettyShow pkgname ++ ".cabal")) bsCabal
 
-                    return ()
+                -- add cabal.project
+                writeByteString (pkgDir </> fromUnrootedFilePath "cabal.project") "packages: ."
+
+                -- git
+                _ <- runProcessCheck tracer pkgDir "git" ["init"]
+                _ <- runProcessCheck tracer pkgDir "git" ["add", "."]
+                _ <- runProcessCheck tracer pkgDir "git" ["commit", "-am", "trustee get"]
+
+                return ()
 
 withCurlPeu :: (CURL -> Peu r a) -> Peu r a
 withCurlPeu kont = withRunInIO $ \runInIO -> withCurl $ \curl -> runInIO (kont curl)

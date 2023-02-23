@@ -10,8 +10,8 @@ module Trustee.Options (
     parseOpts,
     ) where
 
-import Control.Applicative     (many, optional, (<**>), (<|>))
-import Data.Time               (UTCTime, defaultTimeLocale, parseTimeM)
+import Control.Applicative     ((<**>))
+import Data.Time               (defaultTimeLocale, parseTimeM)
 import Distribution.Parsec     (Parsec (..), ParsecParser, eitherParsec, explicitEitherParsec)
 import Distribution.Types.Flag (FlagAssignment, parsecFlagAssignment)
 import Distribution.Version    (anyVersion, intersectVersionRanges)
@@ -73,7 +73,7 @@ data PlanParams = PlanParams
 data Cmd
     = CmdMatrix Verify [FsPath]
     -- | CmdNewBuild [String]
-    | CmdGet PackageName VersionRange
+    | CmdGet PackageName (Maybe VersionRange)
     | CmdBounds Verify Limit
     | CmdSweep Verify
 
@@ -215,7 +215,7 @@ cmdMatrix = CmdMatrix
 cmdGet :: O.Parser Cmd
 cmdGet = CmdGet
     <$> name
-    <*> (version <|> pure anyVersion)
+    <*> (Just <$> versionRange <|> latest <|> pure (Just anyVersion))
     <**> O.helper
   where
     name = O.argument (O.eitherReader eitherParsec) $ mconcat
@@ -223,9 +223,19 @@ cmdGet = CmdGet
         , O.help "Package name"
         ]
 
-    version = O.argument (O.eitherReader eitherParsec) $ mconcat
+    versionRange :: O.Parser VersionRange
+    versionRange = O.argument (O.eitherReader $ explicitEitherParsec p) $ mconcat
         [ O.metavar ":versions"
         , O.help "Version range"
+        ]
+      where
+        p :: ParsecParser VersionRange
+        p = parsec <|> C.thisVersion <$> parsec
+
+    latest :: O.Parser (Maybe a)
+    latest = O.flag' Nothing $ mconcat
+        [ O.long "latest"
+        , O.help "Latest version"
         ]
 
 verify :: O.Parser Verify
