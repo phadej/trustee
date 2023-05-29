@@ -22,23 +22,24 @@ module Trustee.Monad (
 
 import Control.Concurrent.STM
        (STM, TVar, atomically, modifyTVar, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, writeTVar)
-import Control.Exception         (evaluate)
-import Data.List                 (isPrefixOf)
-import Data.Monoid               (Sum (..))
+import Control.Exception          (evaluate)
+import Data.Functor.Representable (index)
+import Data.List                  (isPrefixOf)
+import Data.Monoid                (Sum (..))
 import Data.Time
        (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime, getCurrentTimeZone, utcToLocalTime)
-import Distribution.Types.Flag   (dispFlagAssignment)
-import Distribution.Version      (VersionRange, anyVersion, simplifyVersionRange)
-import Foreign.C.Types           (CClock (..))
-import System.Clock              (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
-import System.Console.Concurrent (outputConcurrent)
-import System.Console.Regions    (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
-import System.Exit               (ExitCode (..))
-import System.Posix.Process      (ProcessTimes (..), getProcessTimes)
-import Text.Printf               (printf)
+import Distribution.Types.Flag    (dispFlagAssignment)
+import Distribution.Version       (VersionRange, anyVersion, simplifyVersionRange)
+import Foreign.C.Types            (CClock (..))
+import System.Clock               (Clock (Monotonic), TimeSpec, getTime, toNanoSecs)
+import System.Console.Concurrent  (outputConcurrent)
+import System.Console.Regions     (RegionLayout (Linear), setConsoleRegion, withConsoleRegion)
+import System.Exit                (ExitCode (..))
+import System.Posix.Process       (ProcessTimes (..), getProcessTimes)
+import Text.Printf                (printf)
 import Urakka
        (ConcSt, Urakka, overEstimate, runConcurrent', underEstimate, urakkaDone, urakkaOverEstimate, urakkaQueued)
-import Urakka.Estimation         (addEstimationPoint, currentEstimate, mkEstimator)
+import Urakka.Estimation          (addEstimationPoint, currentEstimate, mkEstimator)
 
 import qualified Cabal.Plan               as Cabal
 import qualified Control.Concurrent.Async as Async
