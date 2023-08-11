@@ -1,7 +1,7 @@
 packages: .
 
 index-state: 2023-01-30T16:44:20Z
-with-compiler: ghc-9.2.5
+with-compiler: ghc-9.2.8
 
 packages: https://oleg.fi/gentle-introduction-2022.5.tar.gz
 

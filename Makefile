@@ -1,7 +1,7 @@
 all :  build
 
 build : 
-	cabal new-build -w ghc-9.2.5
+	cabal new-build -w ghc-9.2.8
 
 install : build
 	cp `cabal-plan list-bin trustee` /cabal/bin/trustee
