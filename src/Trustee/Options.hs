@@ -120,6 +120,10 @@ globalOpts = mkGlobalOpts
         [ O.short '8'
         , O.help "GHC>=8"
         ] <|>
+        flag' (C.orLaterVersion $ C.mkVersion [9])
+        [ O.short '9'
+        , O.help "GHC>=9"
+        ] <|>
         pure anyVersion
 
     constraints = option (O.eitherReader $ explicitEitherParsec namedConstraint)
