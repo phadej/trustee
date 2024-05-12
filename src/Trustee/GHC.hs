@@ -45,7 +45,7 @@ toVersion GHC_9_2  = mkVersion [9,2,8]
 toVersion GHC_9_4  = mkVersion [9,4,8]
 toVersion GHC_9_6  = mkVersion [9,6,5]
 toVersion GHC_9_8  = mkVersion [9,8,2]
-toVersion GHC_9_10  = mkVersion [9,10]
+toVersion GHC_9_10 = mkVersion [9,10,1]
 
 data PerGHC a = PerGHC a a a a a a a a a a
   deriving (Functor, Foldable, Traversable, Generic, Generic1)
