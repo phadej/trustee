@@ -43,7 +43,7 @@ toVersion GHC_8_10 = mkVersion [8,10,7]
 toVersion GHC_9_0  = mkVersion [9,0,2]
 toVersion GHC_9_2  = mkVersion [9,2,8]
 toVersion GHC_9_4  = mkVersion [9,4,8]
-toVersion GHC_9_6  = mkVersion [9,6,5]
+toVersion GHC_9_6  = mkVersion [9,6,6]
 toVersion GHC_9_8  = mkVersion [9,8,2]
 toVersion GHC_9_10 = mkVersion [9,10,1]
 
